@@ -1,0 +1,136 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: #160c2a;
+  color: #f2ead3;
+  font-family: 'Inter', system-ui, sans-serif;
+  /* subtle starfield + vignette, like the logo background */
+  background-image:
+    radial-gradient(1px 1px at 20% 30%, rgba(232, 181, 71, 0.35), transparent),
+    radial-gradient(1px 1px at 70% 60%, rgba(110, 155, 255, 0.35), transparent),
+    radial-gradient(1px 1px at 40% 80%, rgba(90, 184, 214, 0.3), transparent),
+    radial-gradient(1px 1px at 85% 20%, rgba(242, 234, 211, 0.3), transparent),
+    radial-gradient(circle at 50% 0%, #20123e 0%, #160c2a 45%, #0e0720 100%);
+  background-attachment: fixed;
+}
+
+@layer components {
+  /* Pixel label — small uppercase tracked text */
+  .label {
+    @apply font-mono text-[10px] uppercase tracking-label text-faint;
+  }
+  .pixel-title {
+    @apply font-pixel text-gold;
+    text-shadow: 2px 2px 0 #0e0720;
+  }
+
+  /* Chunky pixel frame — stepped corners via layered box-shadow */
+  .pixel-frame {
+    @apply relative bg-surface/85;
+    border: 2px solid theme('colors.gold');
+    box-shadow:
+      0 0 0 2px theme('colors.bgDeep'),
+      4px 4px 0 0 rgba(14, 7, 32, 0.6),
+      inset 0 0 0 1px rgba(232, 181, 71, 0.18);
+    image-rendering: pixelated;
+  }
+  .pixel-frame-purple {
+    border-color: theme('colors.line2');
+    box-shadow:
+      0 0 0 2px theme('colors.bgDeep'),
+      4px 4px 0 0 rgba(14, 7, 32, 0.6),
+      inset 0 0 0 1px rgba(106, 79, 160, 0.25);
+  }
+
+  /* Pixel button */
+  .pixel-btn {
+    @apply relative inline-flex items-center justify-center gap-2 font-mono text-[11px] uppercase tracking-label text-bgDeep font-semibold px-4 py-2.5 select-none;
+    background: theme('colors.gold');
+    border: 2px solid theme('colors.bgDeep');
+    box-shadow: 3px 3px 0 0 rgba(14, 7, 32, 0.7);
+    transition: transform 0.05s ease, box-shadow 0.05s ease, filter 0.1s ease;
+  }
+  .pixel-btn:hover {
+    filter: brightness(1.08);
+  }
+  .pixel-btn:active {
+    transform: translate(2px, 2px);
+    box-shadow: 1px 1px 0 0 rgba(14, 7, 32, 0.7);
+  }
+  .pixel-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .pixel-btn-ghost {
+    @apply text-ink;
+    background: theme('colors.surface2');
+    border-color: theme('colors.line2');
+    box-shadow: 3px 3px 0 0 rgba(14, 7, 32, 0.7);
+  }
+  .pixel-btn-danger {
+    background: theme('colors.danger');
+    @apply text-ink;
+  }
+  .pixel-btn-crystal {
+    background: theme('colors.crystal');
+  }
+
+  /* Form fields */
+  .field {
+    @apply w-full bg-bgDeep/70 text-ink text-sm px-3 py-2.5 outline-none;
+    border: 2px solid theme('colors.line');
+    transition: border-color 0.12s ease;
+  }
+  .field:focus {
+    border-color: theme('colors.gold');
+  }
+  textarea.field {
+    @apply font-mono text-[13px] leading-relaxed;
+    resize: vertical;
+  }
+
+  /* Nav item */
+  .nav-item {
+    @apply flex items-center gap-3 px-3 py-2.5 font-mono text-[11px] uppercase tracking-label text-muted cursor-pointer;
+    border: 2px solid transparent;
+    transition: all 0.1s ease;
+  }
+  .nav-item:hover {
+    @apply text-ink bg-surface2/60;
+  }
+  .nav-item-active {
+    @apply text-gold bg-surface2;
+    border-color: theme('colors.line2');
+    box-shadow: inset 3px 0 0 0 theme('colors.gold');
+  }
+
+  /* small chip */
+  .chip {
+    @apply inline-flex items-center gap-1 font-mono text-[10px] px-2 py-1 text-crystal;
+    background: rgba(90, 184, 214, 0.1);
+    border: 1px solid rgba(90, 184, 214, 0.35);
+  }
+}
+
+/* custom scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #0e0720; }
+::-webkit-scrollbar-thumb { background: #3a2a60; border: 2px solid #0e0720; }
+::-webkit-scrollbar-thumb:hover { background: #4a3578; }
