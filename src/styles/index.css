@@ -134,3 +134,35 @@ body {
 ::-webkit-scrollbar-track { background: #0e0720; }
 ::-webkit-scrollbar-thumb { background: #3a2a60; border: 2px solid #0e0720; }
 ::-webkit-scrollbar-thumb:hover { background: #4a3578; }
+
+/* ── Chym Writer ─────────────────────────────────────────────────────────── */
+.chym-doc .ProseMirror { outline: none; min-height: 55vh; color: #f2ead3; line-height: 1.6; }
+.chym-doc .ProseMirror:focus { outline: none; }
+.chym-doc h1 { font-size: 1.8em; font-weight: 800; margin: 0.6em 0 0.3em; color: #e8b547; }
+.chym-doc h2 { font-size: 1.45em; font-weight: 800; margin: 0.6em 0 0.3em; }
+.chym-doc h3 { font-size: 1.2em; font-weight: 700; margin: 0.5em 0 0.25em; }
+.chym-doc p { margin: 0.4em 0; }
+.chym-doc ul { list-style: disc; padding-left: 1.4em; margin: 0.4em 0; }
+.chym-doc ol { list-style: decimal; padding-left: 1.5em; margin: 0.4em 0; }
+.chym-doc blockquote { border-left: 3px solid #4a3578; padding-left: 0.8em; color: #b7a6d6; margin: 0.5em 0; }
+.chym-doc a { color: #5ab8d6; }
+.chym-doc .is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: #7c6ba6;
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+.chym-tag { border-radius: 3px; padding: 0 1px; }
+.chym-tag-live { color: #8fd0ff; text-decoration: underline dotted; cursor: pointer; font-weight: 600; }
+.chym-tag-dead { color: #7c6ba6; }
+
+/* React Flow on dark theme */
+.react-flow__attribution { display: none; }
+.react-flow__controls-button {
+  background: #241640;
+  border-bottom: 1px solid #4a3578;
+  color: #f2ead3;
+  fill: #f2ead3;
+}
+.react-flow__controls-button:hover { background: #2e1c52; }

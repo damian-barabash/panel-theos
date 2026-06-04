@@ -6,8 +6,11 @@ export function Logo({ className = '', height = 56 }) {
       src="./Logo.png"
       alt="Theos"
       height={height}
-      style={{ height, imageRendering: 'pixelated' }}
-      className={className}
+      // width:auto + self-start keep the aspect ratio when the logo is a flex
+      // child (e.g. the mobile drawer column), where align-items:stretch would
+      // otherwise stretch it horizontally.
+      style={{ height, width: 'auto', imageRendering: 'pixelated' }}
+      className={`block w-auto self-start shrink-0 ${className}`}
       draggable={false}
     />
   )
