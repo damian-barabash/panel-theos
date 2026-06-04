@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from 'react'
+import { useRef, useState, useCallback, useEffect } from 'react'
 import { PastelPicker, FontPicker } from './Pickers'
 import { splitWithTags } from './hashtags'
 import { fontCss } from './constants'
@@ -16,6 +16,14 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
   const [sel, setSel] = useState({ r1: 0, c1: 0, r2: 0, c2: 0 })
   const [editing, setEditing] = useState(null)
   const resizing = useRef(null)
+  const dragging = useRef(false)
+
+  // End drag-selection wherever the mouse is released.
+  useEffect(() => {
+    const up = () => { dragging.current = false }
+    window.addEventListener('mouseup', up)
+    return () => window.removeEventListener('mouseup', up)
+  }, [])
 
   const commit = useCallback((next) => { setData(next); onChange(next) }, [onChange])
 
@@ -169,8 +177,16 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
                       rowSpan={span?.rs}
                       colSpan={span?.cs}
                       onMouseDown={(e) => {
-                        if (e.shiftKey) setSel((s) => ({ ...s, r2: r, c2: c }))
-                        else setSel({ r1: r, c1: c, r2: r, c2: c })
+                        if (editing && editing.r === r && editing.c === c) return
+                        if (e.shiftKey) {
+                          setSel((s) => ({ ...s, r2: r, c2: c }))
+                        } else {
+                          setSel({ r1: r, c1: c, r2: r, c2: c })
+                          dragging.current = true
+                        }
+                      }}
+                      onMouseEnter={() => {
+                        if (dragging.current) setSel((s) => ({ ...s, r2: r, c2: c }))
                       }}
                       onDoubleClick={() => setEditing({ r, c })}
                       style={{
@@ -179,8 +195,13 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
                         fontWeight: cell.bold ? 700 : 400,
                         fontFamily: cell.font ? fontCss(cell.font) : undefined,
                         color: cell.bg ? '#1A1030' : '#F2EAD3',
+                        // Full box outline on selection (border-collapse would
+                        // otherwise only show on the bottom/right shared edges).
+                        ...(inSel(r, c)
+                          ? { outline: '2px solid #E8B547', outlineOffset: '-2px', position: 'relative', zIndex: 1 }
+                          : {}),
                       }}
-                      className={`h-7 border px-1.5 py-1 align-top text-[13px] ${inSel(r, c) ? 'border-gold' : 'border-line'}`}
+                      className="h-7 border border-line px-1.5 py-1 align-top text-[13px]"
                     >
                       {isEditing ? (
                         <div
