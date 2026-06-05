@@ -38,6 +38,16 @@ export function aiChat({ messages, temperature, model }) {
   return callFunction('ai-proxy', { messages, temperature, model })
 }
 
+// ── Player data for the test-chat (via panel-player edge function) ──────────
+// Read-only, service-role behind the panel-admin gate. Lets the test-chat pull
+// a real player's profile/tasks/history so it can reproduce the in-game prompt.
+export function listPlayers() {
+  return callFunction('panel-player', { action: 'list' })
+}
+export function playerContext(user_id) {
+  return callFunction('panel-player', { action: 'context', user_id })
+}
+
 // ── Panel user management (via panel-user edge function) ─────────────────────
 export function createUser({ email, password }) {
   return callFunction('panel-user', { action: 'create', email, password })

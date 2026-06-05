@@ -1,13 +1,17 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { supabase } from '../lib/supabase'
-import { logAction, aiChat } from '../lib/api'
+import { logAction, aiChat, listPlayers, playerContext } from '../lib/api'
+import {
+  buildContext, buildLoreBlock, buildAdvisorPrompt, jsonGeneratorSystem,
+  extractJsonObject, ADVISOR_TURN_SCHEMA, classTitle,
+} from '../lib/advisorPrompt'
 import { PixelFrame, PixelButton, Spinner, useToast } from '../components/ui'
 
 const CAT_LABEL = { persona: 'Персона', advisor: 'Советник', planner: 'Планер', general: 'Общее' }
 
 export default function PromptMaster() {
   const [prompts, setPrompts] = useState(null)
-  const [active, setActive] = useState(null) // prompt key | 'lore' | 'chat'
+  const [active, setActive] = useState(null) // prompt key | 'lore'
 
   const load = useCallback(async () => {
     const { data } = await supabase
@@ -15,7 +19,7 @@ export default function PromptMaster() {
       .select('*')
       .order('sort', { ascending: true })
     setPrompts(data ?? [])
-    setActive((cur) => cur ?? (data && data[0] ? data[0].key : 'chat'))
+    setActive((cur) => cur ?? (data && data[0] ? data[0].key : 'lore'))
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -27,31 +31,37 @@ export default function PromptMaster() {
   const activePrompt = prompts.find((p) => p.key === active)
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="mx-auto max-w-4xl pb-10">
       <h1 className="pixel-title mb-4 text-sm xs:text-base">ПРОМТ-МАСТЕР</h1>
 
-      {/* sub-tabs — horizontal scroll on small screens */}
-      <div className="mb-5 -mx-1 flex gap-1.5 overflow-x-auto pb-1">
-        {prompts.map((p) => (
-          <SubTab key={p.key} active={active === p.key} onClick={() => setActive(p.key)}>
-            {p.title}
+      {/* sub-tabs — prompt keys (scroll) + lore as a separate button apart */}
+      <div className="mb-5 flex items-stretch gap-2">
+        <div className="-mx-1 flex flex-1 gap-1.5 overflow-x-auto px-1 pb-1">
+          {prompts.map((p) => (
+            <SubTab key={p.key} active={active === p.key} onClick={() => setActive(p.key)}>
+              {p.title}
+            </SubTab>
+          ))}
+        </div>
+        <div className="flex shrink-0 items-center gap-2 border-l-2 border-line pl-2">
+          <SubTab active={active === 'lore'} onClick={() => setActive('lore')} accent="crystal">
+            История мира
           </SubTab>
-        ))}
-        <SubTab active={active === 'lore'} onClick={() => setActive('lore')} accent="crystal">
-          История мира
-        </SubTab>
-        <SubTab active={active === 'chat'} onClick={() => setActive('chat')} accent="crystal">
-          Чат
-        </SubTab>
+        </div>
       </div>
 
       {active === 'lore' ? (
         <LoreManager />
-      ) : active === 'chat' ? (
-        <TestChat prompts={prompts} />
       ) : activePrompt ? (
         <PromptEditor key={activePrompt.key} prompt={activePrompt} onSaved={load} />
       ) : null}
+
+      {/* Test-chat — always docked at the bottom of the page, below the editor.
+          Lets you tweak a prompt above and immediately test the result here,
+          for any player, reproducing the exact in-game advisor request. */}
+      <div className="mt-7 border-t-2 border-line pt-6">
+        <TestChat prompts={prompts} />
+      </div>
     </div>
   )
 }
@@ -327,73 +337,215 @@ function LoreEditor({ row, onClose, onSaved }) {
 }
 
 // ── Live test chat (via ai-proxy) ────────────────────────────────────────────
+// Two modes:
+//  • no player  → free-form style probe (persona + lore as the system prompt).
+//  • a player   → reproduces the EXACT in-game advisor request: it pulls that
+//    player's class/stats/tasks/history (panel-player) and assembles the same
+//    `advisor_instructions` prompt + JSON schema the app sends, so Theos sounds
+//    identical here and in the game. Switch players to compare classes.
 function TestChat({ prompts }) {
   const toast = useToast()
-  const persona = useMemo(() => prompts.find((p) => p.key === 'theos_persona'), [prompts])
-  const [lore, setLore] = useState('')
-  const [messages, setMessages] = useState([]) // {role, content}
+  const byKey = useMemo(
+    () => Object.fromEntries(prompts.map((p) => [p.key, p])),
+    [prompts])
+  const get = useCallback((key) => byKey[key]?.content ?? '', [byKey])
+
+  const [loreBlock, setLoreBlock] = useState('')
+  const [players, setPlayers] = useState(null)
+  const [playerId, setPlayerId] = useState('') // '' = no player (pure persona)
+  const [ctx, setCtx] = useState(null) // { profile, tasks }
+  const [ctxLoading, setCtxLoading] = useState(false)
+  const [showContext, setShowContext] = useState(false)
+  const [messages, setMessages] = useState([]) // { role: 'user'|'theos', content, note? }
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  const scrollRef = useRef(null)
 
-  // load enabled lore to inject (mirrors what the app will do)
+  // Lore — same enabled rows, same block format the game reads.
   useEffect(() => {
     (async () => {
       const { data } = await supabase
         .from('world_lore')
         .select('title, body, enabled, sort')
-        .eq('enabled', true)
         .order('sort', { ascending: true })
-      if (data && data.length) {
-        const block = data.map((r) => `- ${r.title}: ${r.body}`).join('\n')
-        setLore(`\n\nЗнание о мире (фон, не зачитывай дословно):\n${block}`)
-      } else {
-        setLore('')
-      }
+      setLoreBlock(buildLoreBlock(data ?? []))
     })()
   }, [])
 
-  const system = useMemo(() => {
-    const base = persona?.content || ''
-    return `${base}${lore}\n\nОтвечай живой репликой в роли Теоса — без JSON, без markdown. Это тестовый чат для проверки стиля.`
-  }, [persona, lore])
+  // Player roster for the picker.
+  useEffect(() => {
+    (async () => {
+      try {
+        const { players } = await listPlayers()
+        setPlayers(players ?? [])
+      } catch (e) {
+        setPlayers([])
+        toast.error(e.message)
+      }
+    })()
+  }, []) // eslint-disable-line
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
+  }, [messages, busy])
+
+  async function selectPlayer(id) {
+    setPlayerId(id)
+    setMessages([])
+    setCtx(null)
+    if (!id) return
+    setCtxLoading(true)
+    try {
+      const { profile, tasks, history } = await playerContext(id)
+      setCtx({ profile, tasks })
+      // Seed the visible chat with the player's real advisor history so the
+      // tone snowballs from the same place it does in the game.
+      setMessages((history ?? []).map((h) => ({
+        role: h.role === 'user' ? 'user' : 'theos',
+        content: h.text,
+      })))
+    } catch (e) {
+      toast.error(e.message)
+      setPlayerId('')
+    } finally {
+      setCtxLoading(false)
+    }
+  }
+
+  const pureMode = !playerId
+  const contextText = ctx ? buildContext(ctx.profile, ctx.tasks) : ''
 
   async function send() {
     const text = input.trim()
-    if (!text || busy) return
-    const next = [...messages, { role: 'user', content: text }]
-    setMessages(next)
+    if (!text || busy || ctxLoading) return
     setInput('')
     setBusy(true)
+
+    // History (for the model) is everything said so far, BEFORE this message —
+    // exactly how the game captures it.
+    const history = messages.map((m) => ({
+      role: m.role === 'user' ? 'user' : 'assistant',
+      content: m.content,
+    }))
+    setMessages((m) => [...m, { role: 'user', content: text }])
+
     try {
-      const payload = [{ role: 'system', content: system }, ...next]
-      const { content } = await aiChat({ messages: payload, temperature: Number(persona?.temperature) || 0.85 })
-      setMessages((m) => [...m, { role: 'assistant', content: content || '(пусто)' }])
+      if (pureMode) {
+        const system = `${get('theos_persona')}${loreBlock}\n\nОтвечай живой репликой в роли Теоса — без JSON, без markdown. Это тестовый чат для проверки стиля.`
+        const payload = [
+          { role: 'system', content: system },
+          ...history,
+          { role: 'user', content: text },
+        ]
+        const temp = Number(byKey['theos_persona']?.temperature) || 0.85
+        const { content } = await aiChat({ messages: payload, temperature: temp })
+        setMessages((m) => [...m, { role: 'theos', content: content || '(пусто)' }])
+      } else {
+        const userPrompt = buildAdvisorPrompt({
+          get,
+          loreBlock,
+          context: buildContext(ctx.profile, ctx.tasks),
+          history,
+          mode: 'reply',
+          userMessage: text,
+        })
+        const system = jsonGeneratorSystem(ADVISOR_TURN_SCHEMA)
+        const temp = Number(byKey['advisor_instructions']?.temperature) || 0.85
+        const { content } = await aiChat({
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: temp,
+        })
+        let msg, note
+        try {
+          const obj = extractJsonObject(content)
+          msg = (obj.message || '').trim() || 'Я слушаю тебя, носитель.'
+          const t = obj.task || {}
+          const hasTask = String(t.title || '').trim() || String(t.plain_text || '').trim()
+          if (obj.create_task === true && hasTask) {
+            note = `предложил задание: «${String(t.title || t.plain_text).trim()}»${t.is_negative ? ' · порок' : ''}`
+          }
+        } catch (_) {
+          msg = `⚠ JSON не распарсился. Сырой ответ модели:\n${content}`
+        }
+        setMessages((m) => [...m, { role: 'theos', content: msg, note }])
+      }
     } catch (e) {
       toast.error(e.message)
-      setMessages((m) => [...m, { role: 'assistant', content: `⚠ ${e.message}` }])
+      setMessages((m) => [...m, { role: 'theos', content: `⚠ ${e.message}` }])
     } finally {
       setBusy(false)
     }
   }
 
   return (
-    <PixelFrame className="flex flex-col px-4 py-5 sm:px-5" >
+    <PixelFrame className="flex flex-col px-4 py-5 sm:px-5">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-mono text-sm uppercase tracking-label text-gold">Тест-чат · Теос</h2>
-        <div className="flex items-center gap-2">
-          {lore && <span className="chip">лор подключён</span>}
-          <PixelButton variant="ghost" className="!px-2.5 !py-1.5 !text-[10px]" onClick={() => setMessages([])}>
-            Очистить
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`chip ${pureMode ? '' : 'border-crystal/60 text-crystal'}`}>
+            {pureMode ? 'чистая персона' : 'режим игры'}
+          </span>
+          {loreBlock && <span className="chip">лор подключён</span>}
+          <PixelButton
+            variant="ghost"
+            className="!px-2.5 !py-1.5 !text-[10px]"
+            onClick={() => (playerId ? selectPlayer(playerId) : setMessages([]))}
+          >
+            {playerId ? 'Сброс' : 'Очистить'}
           </PixelButton>
         </div>
       </div>
+
+      {/* Player picker */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span className="label">Тестировать за:</span>
+        <select
+          value={playerId}
+          onChange={(e) => selectPlayer(e.target.value)}
+          className="field !w-auto !py-1.5 !text-xs"
+          disabled={players === null || ctxLoading}
+        >
+          <option value="">— без игрока (чистая персона) —</option>
+          {(players ?? []).map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name} · {classTitle(p.character_class)} · ур.{p.level}
+            </option>
+          ))}
+        </select>
+        {ctxLoading && <Spinner />}
+        {ctx && (
+          <button
+            className="label text-crystal hover:text-ink"
+            onClick={() => setShowContext((v) => !v)}
+          >
+            контекст {showContext ? '▴' : '▾'}
+          </button>
+        )}
+      </div>
+
       <p className="mb-3 text-xs text-faint">
-        Системный промпт = «Персона Теоса» + включённый лор. Меняй персону/лор во вкладках и проверяй стиль здесь.
+        {pureMode
+          ? 'Без игрока: системный промпт = «Персона» + включённый лор, свободный ответ — для быстрой проверки стиля.'
+          : 'С игроком: собирается точно тот же запрос, что шлёт игра (персона + лор + контекст игрока + история + правила + JSON-схема). Так Теос звучит как в приложении.'}
       </p>
 
-      <div className="mb-3 flex max-h-[46vh] min-h-[180px] flex-col gap-2.5 overflow-y-auto border-2 border-line bg-bgDeep/40 px-3 py-3">
+      {showContext && ctx && (
+        <pre className="mb-3 max-h-40 overflow-y-auto whitespace-pre-wrap border-2 border-crystal/40 bg-bgDeep/40 px-3 py-2 font-mono text-[11px] text-muted">
+          {contextText}
+        </pre>
+      )}
+
+      <div
+        ref={scrollRef}
+        className="mb-3 flex max-h-[46vh] min-h-[180px] flex-col gap-2.5 overflow-y-auto border-2 border-line bg-bgDeep/40 px-3 py-3"
+      >
         {messages.length === 0 ? (
-          <p className="m-auto text-sm text-muted">Напиши что-нибудь Теосу…</p>
+          <p className="m-auto text-sm text-muted">
+            {pureMode ? 'Напиши что-нибудь Теосу…' : 'История игрока подтянута. Продолжи диалог за него.'}
+          </p>
         ) : (
           messages.map((m, i) => (
             <div key={i} className={`max-w-[85%] px-3 py-2 text-sm ${
@@ -403,6 +555,11 @@ function TestChat({ prompts }) {
             }`}>
               <span className="label mb-1 block">{m.role === 'user' ? 'Носитель' : 'Теос'}</span>
               <span className="whitespace-pre-wrap">{m.content}</span>
+              {m.note && (
+                <span className="mt-1.5 block border-t border-gold/20 pt-1.5 text-[11px] text-crystal">
+                  ⚑ {m.note}
+                </span>
+              )}
             </div>
           ))
         )}
@@ -417,8 +574,9 @@ function TestChat({ prompts }) {
           rows={2}
           placeholder="Сообщение Теосу (Enter — отправить)…"
           className="field flex-1 !text-sm"
+          disabled={ctxLoading}
         />
-        <PixelButton onClick={send} disabled={busy || !input.trim()}>→</PixelButton>
+        <PixelButton onClick={send} disabled={busy || ctxLoading || !input.trim()}>→</PixelButton>
       </div>
     </PixelFrame>
   )
