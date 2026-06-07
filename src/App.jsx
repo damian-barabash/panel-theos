@@ -6,6 +6,7 @@ import Shell from './pages/Shell'
 import Logs from './pages/Logs'
 import PromptMaster from './pages/PromptMaster'
 import Settings from './pages/Settings'
+import PetsFood from './pages/PetsFood'
 import ChymWriter from './pages/chym/ChymWriter'
 
 export default function App() {
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="/logs" element={<Logs />} />
           <Route path="/prompts" element={<PromptMaster />} />
           <Route path="/chym" element={<ChymWriter />} />
+          <Route path="/pets-food" element={<PetsFood />} />
           <Route path="/settings" element={<Settings />} />
         </Route>
         <Route path="*" element={<Navigate to="/prompts" replace />} />
