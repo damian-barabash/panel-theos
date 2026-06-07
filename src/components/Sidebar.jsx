@@ -6,7 +6,7 @@ export const NAV = [
   { to: '/logs', label: 'Логи', icon: '▤' },
   { to: '/prompts', label: 'Промт-мастер', icon: '✦' },
   { to: '/chym', label: 'Chym Writer', icon: '✎' },
-  { to: '/settings', label: 'Версия', icon: '⚙' },
+  { to: '/settings', label: 'Обновления', icon: '⚙' },
 ]
 
 export function NavList({ onNavigate }) {
