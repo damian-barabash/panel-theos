@@ -9,7 +9,7 @@ const colLetter = (i) => {
   while (i > 0) { const r = (i - 1) % 26; s = String.fromCharCode(65 + r) + s; i = Math.floor((i - 1) / 26) }
   return s
 }
-const blankCell = () => ({ t: '', bg: null, bold: false, align: 'left', font: null })
+const blankCell = () => ({ t: '', bg: null, bold: false, align: 'left', valign: 'top', font: null })
 
 export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }) {
   const [data, setData] = useState(() => normalizeContent(sheet.content))
@@ -18,11 +18,12 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
   const [editing, setEditing] = useState(null)
   const resizing = useRef(null)
   const dragging = useRef(false)
+  const dragAxis = useRef(null) // 'cell' | 'row' | 'col' — что тянем при drag-выделении
   const cancelEdit = useRef(false)
 
   // End drag-selection wherever the mouse is released.
   useEffect(() => {
-    const up = () => { dragging.current = false }
+    const up = () => { dragging.current = false; dragAxis.current = null }
     window.addEventListener('mouseup', up)
     return () => window.removeEventListener('mouseup', up)
   }, [])
@@ -101,6 +102,7 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
   const setBg = (bg) => applyToSel(() => ({ bg }))
   const toggleBold = () => { const cur = data.rows[sel.r1][sel.c1].bold; applyToSel(() => ({ bold: !cur })) }
   const setAlign = (align) => applyToSel(() => ({ align }))
+  const setValign = (valign) => applyToSel(() => ({ valign }))
   const setCellFont = (font) => applyToSel(() => ({ font }))
 
   function setCellText(r, c, t) {
@@ -118,20 +120,35 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
     const rows = data.rows.map((row) => [...row, blankCell()])
     commit({ ...data, columns, rows })
   }
+  // Есть ли непустой текст в прямоугольном диапазоне (для предупреждения перед удалением).
+  function rangeHasText(r1, r2, c1, c2) {
+    for (let r = r1; r <= r2; r++)
+      for (let c = c1; c <= c2; c++)
+        if ((data.rows[r]?.[c]?.t || '').trim()) return true
+    return false
+  }
   function delRow() {
-    if (data.rows.length <= 1) return
-    const { r2 } = norm(sel)
-    const rows = data.rows.filter((_, i) => i !== r2)
+    const { r1, r2 } = norm(sel)
+    const count = r2 - r1 + 1
+    if (data.rows.length - count < 1) return // оставляем минимум одну строку
+    if (rangeHasText(r1, r2, 0, data.columns.length - 1) &&
+        !window.confirm(count > 1 ? `Удалить выделенные строки (${count}) вместе с содержимым?` : 'В строке есть текст. Удалить её?')) return
+    const rows = data.rows.filter((_, i) => i < r1 || i > r2)
     commit({ ...data, rows, merges: [] })
-    setSel((s) => ({ ...s, r1: 0, r2: 0 }))
+    const keep = Math.min(r1, rows.length - 1)
+    setSel({ r1: keep, c1: 0, r2: keep, c2: 0 })
   }
   function delCol() {
-    if (data.columns.length <= 1) return
-    const { c2 } = norm(sel)
-    const columns = data.columns.filter((_, i) => i !== c2)
-    const rows = data.rows.map((row) => row.filter((_, i) => i !== c2))
+    const { c1, c2 } = norm(sel)
+    const count = c2 - c1 + 1
+    if (data.columns.length - count < 1) return // оставляем минимум одну колонку
+    if (rangeHasText(0, data.rows.length - 1, c1, c2) &&
+        !window.confirm(count > 1 ? `Удалить выделенные колонки (${count}) вместе с содержимым?` : 'В колонке есть текст. Удалить её?')) return
+    const columns = data.columns.filter((_, i) => i < c1 || i > c2)
+    const rows = data.rows.map((row) => row.filter((_, i) => i < c1 || i > c2))
     commit({ ...data, columns, rows, merges: [] })
-    setSel((s) => ({ ...s, c1: 0, c2: 0 }))
+    const keep = Math.min(c1, columns.length - 1)
+    setSel({ r1: 0, c1: keep, r2: 0, c2: keep })
   }
 
   function mergeSel() {
@@ -177,6 +194,15 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
 
   const tbBtn = (active) => `px-2 py-1 border-2 text-xs ${active ? 'border-gold text-gold' : 'border-line text-muted hover:text-ink'}`
 
+  // Текущая «якорная» ячейка — для подсветки активного выравнивания в тулбаре.
+  const cur = data.rows[sel.r1]?.[sel.c1]
+  const curAlign = cur?.align || 'left'
+  const curValign = cur?.valign || 'top'
+  // Заголовок колонки/строки подсвечен, когда выделение покрывает её целиком.
+  const N = norm(sel)
+  const colHeadSel = (ci) => N.r1 === 0 && N.r2 === data.rows.length - 1 && ci >= N.c1 && ci <= N.c2
+  const rowHeadSel = (r) => N.c1 === 0 && N.c2 === data.columns.length - 1 && r >= N.r1 && r <= N.r2
+
   return (
     <div className="flex h-full flex-col">
       {/* toolbar */}
@@ -186,10 +212,14 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
         <button className={tbBtn(false)} onClick={delRow}>− строка</button>
         <button className={tbBtn(false)} onClick={delCol}>− колонка</button>
         <span className="mx-1 w-px self-stretch bg-line" />
-        <button className={tbBtn(data.rows[sel.r1]?.[sel.c1]?.bold)} onClick={toggleBold}><b>B</b></button>
-        <button className={tbBtn(false)} onClick={() => setAlign('left')}>⫷</button>
-        <button className={tbBtn(false)} onClick={() => setAlign('center')}>≡</button>
-        <button className={tbBtn(false)} onClick={() => setAlign('right')}>⫸</button>
+        <button className={tbBtn(cur?.bold)} onClick={toggleBold}><b>B</b></button>
+        <button className={tbBtn(curAlign === 'left')} title="По левому краю" onClick={() => setAlign('left')}>⫷</button>
+        <button className={tbBtn(curAlign === 'center')} title="По центру (гориз.)" onClick={() => setAlign('center')}>≡</button>
+        <button className={tbBtn(curAlign === 'right')} title="По правому краю" onClick={() => setAlign('right')}>⫸</button>
+        <span className="mx-1 w-px self-stretch bg-line" />
+        <button className={tbBtn(curValign === 'top')} title="По верху" onClick={() => setValign('top')}>⤒</button>
+        <button className={tbBtn(curValign === 'middle')} title="По центру (верт.)" onClick={() => setValign('middle')}>⇕</button>
+        <button className={tbBtn(curValign === 'bottom')} title="По низу" onClick={() => setValign('bottom')}>⤓</button>
         <span className="mx-1 w-px self-stretch bg-line" />
         <button className={tbBtn(false)} onClick={mergeSel}>⛶ объединить</button>
         <button className={tbBtn(false)} onClick={unmergeSel}>разъединить</button>
@@ -208,10 +238,18 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
               <th className="sticky left-0 z-10 h-7 w-10 border border-line bg-surface2" />
               {data.columns.map((col, ci) => (
                 <th key={col.id} style={{ width: col.w, minWidth: col.w }}
-                  className="relative h-7 border border-line bg-surface2 text-[10px] font-mono text-faint">
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    const last = data.rows.length - 1
+                    if (e.shiftKey) setSel((s) => ({ ...s, r1: 0, r2: last, c2: ci }))
+                    else { setSel({ r1: 0, c1: ci, r2: last, c2: ci }); dragging.current = true; dragAxis.current = 'col' }
+                  }}
+                  onMouseEnter={() => { if (dragging.current && dragAxis.current === 'col') setSel((s) => ({ ...s, r1: 0, r2: data.rows.length - 1, c2: ci })) }}
+                  title="Клик — выделить колонку целиком"
+                  className={`relative h-7 cursor-pointer border border-line text-[10px] font-mono ${colHeadSel(ci) ? 'bg-gold/25 text-gold' : 'bg-surface2 text-faint'}`}>
                   {colLetter(ci)}
                   <span
-                    onMouseDown={(e) => startResize(e, ci)}
+                    onMouseDown={(e) => { e.stopPropagation(); startResize(e, ci) }}
                     className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-gold/60"
                   />
                 </th>
@@ -221,7 +259,16 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
           <tbody>
             {data.rows.map((row, r) => (
               <tr key={r}>
-                <td className="sticky left-0 z-10 h-7 w-10 border border-line bg-surface2 text-center text-[10px] font-mono text-faint">{r + 1}</td>
+                <td
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    const last = data.columns.length - 1
+                    if (e.shiftKey) setSel((s) => ({ ...s, c1: 0, c2: last, r2: r }))
+                    else { setSel({ r1: r, c1: 0, r2: r, c2: last }); dragging.current = true; dragAxis.current = 'row' }
+                  }}
+                  onMouseEnter={() => { if (dragging.current && dragAxis.current === 'row') setSel((s) => ({ ...s, c1: 0, c2: data.columns.length - 1, r2: r })) }}
+                  title="Клик — выделить строку целиком"
+                  className={`sticky left-0 z-10 h-7 w-10 cursor-pointer border border-line text-center text-[10px] font-mono ${rowHeadSel(r) ? 'bg-gold/25 text-gold' : 'bg-surface2 text-faint'}`}>{r + 1}</td>
                 {row.map((cell, c) => {
                   if (covered.has(`${r}:${c}`)) return null
                   const span = spanAt.get(`${r}:${c}`)
@@ -238,15 +285,17 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
                         } else {
                           setSel({ r1: r, c1: c, r2: r, c2: c })
                           dragging.current = true
+                          dragAxis.current = 'cell'
                         }
                       }}
                       onMouseEnter={() => {
-                        if (dragging.current) setSel((s) => ({ ...s, r2: r, c2: c }))
+                        if (dragging.current && dragAxis.current === 'cell') setSel((s) => ({ ...s, r2: r, c2: c }))
                       }}
                       onDoubleClick={() => setEditing({ r, c })}
                       style={{
                         background: cell.bg || 'transparent',
                         textAlign: cell.align || 'left',
+                        verticalAlign: cell.valign || 'top',
                         fontWeight: cell.bold ? 700 : 400,
                         fontFamily: cell.font ? fontCss(cell.font) : undefined,
                         color: cell.bg ? '#1A1030' : '#F2EAD3',
@@ -256,7 +305,7 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
                           ? { outline: '2px solid #E8B547', outlineOffset: '-2px', position: 'relative', zIndex: 1 }
                           : {}),
                       }}
-                      className="h-7 border border-line px-1.5 py-1 align-top text-[13px]"
+                      className="h-7 border border-line px-1.5 py-1 text-[13px]"
                     >
                       {isEditing ? (
                         <div
@@ -310,7 +359,7 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
             ))}
           </tbody>
         </table>
-        <p className="mt-3 text-[11px] text-faint">Двойной клик или Enter — редактировать · печатай на выделенной — пишет сразу · Shift+клик — диапазон · Ctrl/⌘+V — вставка из таблиц · #ИмяЛиста — ссылка.</p>
+        <p className="mt-3 text-[11px] text-faint">Двойной клик или Enter — редактировать · печатай на выделенной — пишет сразу · Shift+клик — диапазон · клик по номеру строки / букве колонки — выделить целиком, затем «− строка»/«− колонка» удалит именно её · Ctrl/⌘+V — вставка из таблиц · #ИмяЛиста — ссылка.</p>
       </div>
     </div>
   )
