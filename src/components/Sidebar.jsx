@@ -5,7 +5,7 @@ import { Logo } from './Logo'
 export const NAV = [
   { to: '/logs', label: 'Логи', icon: '▤' },
   { to: '/prompts', label: 'Промт-мастер', icon: '✦' },
-  { to: '/chym', label: 'Chym Writer', icon: '✎' },
+  { to: '/chym', label: '3DD Writer', icon: '✎' },
   { to: '/pets-food', label: 'Животные и еда', icon: '◆' },
   { to: '/settings', label: 'Обновления', icon: '⚙' },
 ]

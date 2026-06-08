@@ -8,7 +8,10 @@ export function SheetTabs({
   // menu = { id, left, bottom } — fixed-positioned so it's never clipped by the
   // horizontally-scrolling tab strip (overflow clips both axes).
   const [menu, setMenu] = useState(null)
-  const dragId = useRef(null)
+  // drag = { id, before } while a pointer-reorder gesture is active.
+  // `before` is the id of the tab the dragged tab will land in front of (null = end).
+  const [drag, setDrag] = useState(null)
+  const tabRefs = useRef({})
 
   const menuSheet = menu ? sheets.find((s) => s.id === menu.id) : null
 
@@ -19,15 +22,52 @@ export function SheetTabs({
     setMenu({ id, left: r.left, bottom: window.innerHeight - r.top + 8 })
   }
 
-  function handleDrop(targetId) {
-    const from = dragId.current
-    dragId.current = null
-    if (!from || from === targetId) return
-    const ids = sheets.map((s) => s.id)
-    const fromIdx = ids.indexOf(from)
-    const toIdx = ids.indexOf(targetId)
-    ids.splice(toIdx, 0, ids.splice(fromIdx, 1)[0])
-    onReorder(ids)
+  // Which tab should the dragged tab land before, given a pointer x? (null = drop at end)
+  function markerBeforeId(dragId, x) {
+    for (const s of sheets) {
+      if (s.id === dragId) continue
+      const el = tabRefs.current[s.id]
+      if (!el) continue
+      const r = el.getBoundingClientRect()
+      if (x < r.left + r.width / 2) return s.id
+    }
+    return null
+  }
+
+  function buildOrder(dragId, before) {
+    const orig = sheets.map((s) => s.id)
+    const rest = orig.filter((id) => id !== dragId)
+    const idx = before == null ? rest.length : rest.indexOf(before)
+    rest.splice(idx, 0, dragId)
+    if (rest.every((id, i) => id === orig[i])) return null
+    return rest
+  }
+
+  // Pointer-based reorder: distinguishes a plain click (select) from a drag (reorder)
+  // by a small movement threshold — smooth, like dragging Google Sheets tabs.
+  function onTabPointerDown(e, id) {
+    if (e.button !== 0) return
+    if (e.target.closest('[data-no-drag]')) return // ⋯ menu trigger
+    const startX = e.clientX
+    let moved = false
+    const move = (ev) => {
+      if (!moved && Math.abs(ev.clientX - startX) < 5) return
+      moved = true
+      setDrag({ id, before: markerBeforeId(id, ev.clientX) })
+    }
+    const up = (ev) => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      if (!moved) {
+        onSelect(id)
+      } else {
+        const order = buildOrder(id, markerBeforeId(id, ev.clientX))
+        if (order) onReorder(order)
+      }
+      setDrag(null)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
   }
 
   return (
@@ -63,27 +103,26 @@ export function SheetTabs({
         )}
       </div>
 
-      {/* tabs (scrollable) */}
+      {/* tabs (scrollable, pointer-reorderable) */}
       <div className="flex flex-1 items-stretch gap-1 overflow-x-auto">
         {sheets.map((s) => {
           const active = s.id === activeId
+          const dragging = drag?.id === s.id
           return (
-            <div
-              key={s.id}
-              draggable
-              onDragStart={() => { dragId.current = s.id }}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={() => handleDrop(s.id)}
-              className="shrink-0"
-            >
+            <div key={s.id} className="flex shrink-0 items-stretch">
+              {/* insertion marker before this tab */}
+              {drag && drag.before === s.id && (
+                <span className="mr-1 w-0.5 self-stretch rounded bg-gold" />
+              )}
               <button
-                onClick={() => onSelect(s.id)}
+                ref={(el) => { tabRefs.current[s.id] = el }}
+                onPointerDown={(e) => onTabPointerDown(e, s.id)}
                 onDoubleClick={(e) => openMenu(e, s.id)}
-                className={`flex items-center gap-2 whitespace-nowrap border-2 px-3 py-1.5 font-sans text-[12px] ${
+                className={`flex touch-none select-none items-center gap-2 whitespace-nowrap border-2 px-3 py-1.5 font-sans text-[12px] ${
                   active
                     ? 'border-gold bg-surface2 text-ink'
                     : 'border-line bg-bg/40 text-muted hover:text-ink'
-                }`}
+                } ${dragging ? 'cursor-grabbing opacity-50' : 'cursor-grab'}`}
               >
                 <span
                   className="h-2.5 w-2.5 shrink-0 rounded-full border border-bgDeep"
@@ -91,6 +130,7 @@ export function SheetTabs({
                 />
                 {s.title}
                 <span
+                  data-no-drag
                   onClick={(e) => openMenu(e, s.id)}
                   className="ml-1 text-faint hover:text-ink"
                 >
@@ -100,6 +140,10 @@ export function SheetTabs({
             </div>
           )
         })}
+        {/* insertion marker at the end */}
+        {drag && drag.before === null && (
+          <span className="w-0.5 self-stretch rounded bg-gold" />
+        )}
       </div>
 
       {/* per-tab menu — fixed so it can't be clipped by the tab strip */}

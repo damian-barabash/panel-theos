@@ -14,9 +14,11 @@ const blankCell = () => ({ t: '', bg: null, bold: false, align: 'left', font: nu
 export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }) {
   const [data, setData] = useState(() => normalizeContent(sheet.content))
   const [sel, setSel] = useState({ r1: 0, c1: 0, r2: 0, c2: 0 })
+  // editing = { r, c, seed? } — seed (a typed char) replaces cell content on entry.
   const [editing, setEditing] = useState(null)
   const resizing = useRef(null)
   const dragging = useRef(false)
+  const cancelEdit = useRef(false)
 
   // End drag-selection wherever the mouse is released.
   useEffect(() => {
@@ -26,6 +28,59 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
   }, [])
 
   const commit = useCallback((next) => { setData(next); onChange(next) }, [onChange])
+
+  // Type-to-edit (печатаешь на выделенной ячейке — сразу пишет) + Enter to edit.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (editing) return
+      const t = e.target
+      if (t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(t.tagName))) return
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      const { r1, c1 } = norm(sel)
+      if (e.key === 'Enter' || e.key === 'F2') { e.preventDefault(); setEditing({ r: r1, c: c1 }); return }
+      if (e.key.length === 1) { e.preventDefault(); setEditing({ r: r1, c: c1, seed: e.key }) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [editing, sel])
+
+  // Paste a Google-Sheets / Excel block (TSV) starting at the selection anchor.
+  useEffect(() => {
+    const onPaste = (e) => {
+      if (editing) return // let native paste fall into the open cell editor
+      const t = e.target
+      if (t && (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return
+      const text = e.clipboardData?.getData('text/plain')
+      if (!text) return
+      e.preventDefault()
+      pasteAt(text)
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, sel, data])
+
+  function pasteAt(text) {
+    const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
+    while (lines.length > 1 && lines[lines.length - 1] === '') lines.pop()
+    const grid = lines.map((line) => line.split('\t'))
+    const { r1, c1 } = norm(sel)
+    const needRows = r1 + grid.length
+    const needCols = c1 + Math.max(...grid.map((g) => g.length))
+    const columns = data.columns.slice()
+    while (columns.length < needCols) columns.push({ id: `c${Date.now()}_${columns.length}`, w: 130 })
+    const rows = data.rows.map((row) => {
+      const nr = row.slice()
+      while (nr.length < columns.length) nr.push(blankCell())
+      return nr
+    })
+    while (rows.length < needRows) rows.push(columns.map(blankCell))
+    for (let i = 0; i < grid.length; i++)
+      for (let j = 0; j < grid[i].length; j++)
+        rows[r1 + i][c1 + j] = { ...rows[r1 + i][c1 + j], t: grid[i][j] }
+    commit({ ...data, columns, rows, merges: [] })
+    setSel({ r1, c1, r2: needRows - 1, c2: needCols - 1 })
+  }
 
   const inSel = (r, c) => {
     const { r1, c1, r2, c2 } = norm(sel)
@@ -207,9 +262,28 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
                         <div
                           contentEditable
                           suppressContentEditableWarning
-                          autoFocus
-                          ref={(el) => { if (el && !el.dataset.init) { el.dataset.init = '1'; el.textContent = cell.t } }}
-                          onBlur={(e) => { setCellText(r, c, e.currentTarget.textContent); setEditing(null) }}
+                          ref={(el) => {
+                            if (!el || el.dataset.init) return
+                            el.dataset.init = '1'
+                            el.textContent = editing.seed != null ? editing.seed : cell.t
+                            el.focus()
+                            const range = document.createRange()
+                            range.selectNodeContents(el)
+                            range.collapse(false) // cursor at end
+                            const s = window.getSelection()
+                            s.removeAllRanges()
+                            s.addRange(range)
+                          }}
+                          onKeyDown={(e) => {
+                            e.stopPropagation()
+                            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.blur() }
+                            else if (e.key === 'Escape') { e.preventDefault(); cancelEdit.current = true; setEditing(null) }
+                          }}
+                          onBlur={(e) => {
+                            if (cancelEdit.current) { cancelEdit.current = false; setEditing(null); return }
+                            setCellText(r, c, e.currentTarget.textContent)
+                            setEditing(null)
+                          }}
                           className="min-w-[40px] outline-none"
                         />
                       ) : (
@@ -236,7 +310,7 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
             ))}
           </tbody>
         </table>
-        <p className="mt-3 text-[11px] text-faint">Двойной клик — редактировать ячейку · Shift+клик — выделить диапазон · #ИмяЛиста — ссылка.</p>
+        <p className="mt-3 text-[11px] text-faint">Двойной клик или Enter — редактировать · печатай на выделенной — пишет сразу · Shift+клик — диапазон · Ctrl/⌘+V — вставка из таблиц · #ИмяЛиста — ссылка.</p>
       </div>
     </div>
   )

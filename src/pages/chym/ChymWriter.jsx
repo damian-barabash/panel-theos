@@ -99,7 +99,7 @@ export default function ChymWriter() {
     >
       {/* header */}
       <div className="flex items-center gap-2 border-b-2 border-line bg-bg/80 px-3 py-2">
-        <span className="pixel-title text-[11px] xs:text-xs">CHYM WRITER</span>
+        <span className="pixel-title text-[11px] xs:text-xs">3DD WRITER</span>
         <span className="label truncate hidden sm:block">{active ? active.title : '—'}</span>
         <div className="ml-auto flex items-center gap-1.5">
           <IconBtn title="Список листов" onClick={() => setDrawerOpen(true)}>☰</IconBtn>
