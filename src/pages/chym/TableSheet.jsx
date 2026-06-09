@@ -17,6 +17,7 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
   // editing = { r, c, seed? } — seed (a typed char) replaces cell content on entry.
   const [editing, setEditing] = useState(null)
   const resizing = useRef(null)
+  const rowResizing = useRef(null)
   const dragging = useRef(false)
   const dragAxis = useRef(null) // 'cell' | 'row' | 'col' — что тянем при drag-выделении
   const cancelEdit = useRef(false)
@@ -58,6 +59,50 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
     }
     window.addEventListener('paste', onPaste)
     return () => window.removeEventListener('paste', onPaste)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, sel, data])
+
+  // Copy / cut the whole selection as TSV (so multi-cell Ctrl+C/Ctrl+X work).
+  useEffect(() => {
+    const fromTable = (e) => {
+      if (editing) return false // let the open cell editor copy/cut natively
+      const t = e.target
+      if (t && (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return false
+      return true
+    }
+    const selectionTsv = () => {
+      const { r1, c1, r2, c2 } = norm(sel)
+      const out = []
+      for (let r = r1; r <= r2; r++) {
+        const line = []
+        for (let c = c1; c <= c2; c++)
+          line.push(String(data.rows[r]?.[c]?.t ?? '').replace(/[\t\n\r]/g, ' '))
+        out.push(line.join('\t'))
+      }
+      return out.join('\n')
+    }
+    const onCopy = (e) => {
+      if (!fromTable(e)) return
+      e.preventDefault()
+      e.clipboardData.setData('text/plain', selectionTsv())
+    }
+    const onCut = (e) => {
+      if (!fromTable(e)) return
+      e.preventDefault()
+      e.clipboardData.setData('text/plain', selectionTsv())
+      const { r1, c1, r2, c2 } = norm(sel)
+      const rows = data.rows.map((row) => row.slice())
+      for (let r = r1; r <= r2; r++)
+        for (let c = c1; c <= c2; c++)
+          if (rows[r]?.[c]) rows[r][c] = { ...rows[r][c], t: '' }
+      commit({ ...data, rows })
+    }
+    window.addEventListener('copy', onCopy)
+    window.addEventListener('cut', onCut)
+    return () => {
+      window.removeEventListener('copy', onCopy)
+      window.removeEventListener('cut', onCut)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing, sel, data])
 
@@ -115,10 +160,18 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
     const rows = [...data.rows, data.columns.map(blankCell)]
     commit({ ...data, rows })
   }
-  function addCol() {
-    const columns = [...data.columns, { id: `c${Date.now()}`, w: 130 }]
-    const rows = data.rows.map((row) => [...row, blankCell()])
-    commit({ ...data, columns, rows })
+  // Inserts a column at index [at] (0..columns.length). Merges reset, matching
+  // the convention of the other structural edits (paste / row+col delete).
+  function addColAt(at) {
+    const columns = data.columns.slice()
+    columns.splice(at, 0, { id: `c${Date.now()}_${at}`, w: 130 })
+    const rows = data.rows.map((row) => {
+      const nr = row.slice()
+      nr.splice(at, 0, blankCell())
+      return nr
+    })
+    commit({ ...data, columns, rows, merges: [] })
+    setSel({ r1: 0, c1: at, r2: data.rows.length - 1, c2: at })
   }
   // Есть ли непустой текст в прямоугольном диапазоне (для предупреждения перед удалением).
   function rangeHasText(r1, r2, c1, c2) {
@@ -134,7 +187,8 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
     if (rangeHasText(r1, r2, 0, data.columns.length - 1) &&
         !window.confirm(count > 1 ? `Удалить выделенные строки (${count}) вместе с содержимым?` : 'В строке есть текст. Удалить её?')) return
     const rows = data.rows.filter((_, i) => i < r1 || i > r2)
-    commit({ ...data, rows, merges: [] })
+    const rowHeights = (data.rowHeights || []).filter((_, i) => i < r1 || i > r2)
+    commit({ ...data, rows, rowHeights, merges: [] })
     const keep = Math.min(r1, rows.length - 1)
     setSel({ r1: keep, c1: 0, r2: keep, c2: 0 })
   }
@@ -182,6 +236,28 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
     window.addEventListener('mouseup', up)
   }
 
+  // row height resize
+  function startRowResize(e, ri) {
+    e.preventDefault()
+    rowResizing.current = { ri, startY: e.clientY, startH: data.rowHeights?.[ri] || 28 }
+    const move = (ev) => {
+      const { ri, startY, startH } = rowResizing.current
+      const h = Math.max(28, startH + (ev.clientY - startY))
+      setData((d) => {
+        const rowHeights = (d.rowHeights || []).slice()
+        rowHeights[ri] = h
+        return { ...d, rowHeights }
+      })
+    }
+    const up = () => {
+      window.removeEventListener('mousemove', move)
+      window.removeEventListener('mouseup', up)
+      setData((d) => { onChange(d); return d })
+    }
+    window.addEventListener('mousemove', move)
+    window.addEventListener('mouseup', up)
+  }
+
   // merge lookup
   const covered = new Set()
   const spanAt = new Map()
@@ -208,7 +284,8 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
       {/* toolbar */}
       <div className="flex flex-wrap items-center gap-1 border-b-2 border-line bg-bg/60 px-2 py-1.5">
         <button className={tbBtn(false)} onClick={addRow}>+ строка</button>
-        <button className={tbBtn(false)} onClick={addCol}>+ колонка</button>
+        <button className={tbBtn(false)} title="Добавить колонку слева от выделенной" onClick={() => addColAt(norm(sel).c1)}>+ кол ←</button>
+        <button className={tbBtn(false)} title="Добавить колонку справа от выделенной" onClick={() => addColAt(norm(sel).c2 + 1)}>+ кол →</button>
         <button className={tbBtn(false)} onClick={delRow}>− строка</button>
         <button className={tbBtn(false)} onClick={delCol}>− колонка</button>
         <span className="mx-1 w-px self-stretch bg-line" />
@@ -250,7 +327,8 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
                   {colLetter(ci)}
                   <span
                     onMouseDown={(e) => { e.stopPropagation(); startResize(e, ci) }}
-                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-gold/60"
+                    title="Тяни — ширина колонки"
+                    className="absolute right-0 top-0 z-20 h-full w-2 cursor-col-resize bg-gold/15 hover:bg-gold/70"
                   />
                 </th>
               ))}
@@ -258,7 +336,7 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
           </thead>
           <tbody>
             {data.rows.map((row, r) => (
-              <tr key={r}>
+              <tr key={r} style={{ height: data.rowHeights?.[r] }}>
                 <td
                   onMouseDown={(e) => {
                     e.preventDefault()
@@ -268,7 +346,14 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
                   }}
                   onMouseEnter={() => { if (dragging.current && dragAxis.current === 'row') setSel((s) => ({ ...s, c1: 0, c2: data.columns.length - 1, r2: r })) }}
                   title="Клик — выделить строку целиком"
-                  className={`sticky left-0 z-10 h-7 w-10 cursor-pointer border border-line text-center text-[10px] font-mono ${rowHeadSel(r) ? 'bg-gold/25 text-gold' : 'bg-surface2 text-faint'}`}>{r + 1}</td>
+                  className={`relative sticky left-0 z-10 h-7 w-10 cursor-pointer border border-line text-center text-[10px] font-mono ${rowHeadSel(r) ? 'bg-gold/25 text-gold' : 'bg-surface2 text-faint'}`}>
+                  {r + 1}
+                  <span
+                    onMouseDown={(e) => { e.stopPropagation(); startRowResize(e, r) }}
+                    title="Тяни — высота строки"
+                    className="absolute bottom-0 left-0 z-20 h-2 w-full cursor-row-resize bg-gold/15 hover:bg-gold/70"
+                  />
+                </td>
                 {row.map((cell, c) => {
                   if (covered.has(`${r}:${c}`)) return null
                   const span = spanAt.get(`${r}:${c}`)
@@ -359,7 +444,7 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
             ))}
           </tbody>
         </table>
-        <p className="mt-3 text-[11px] text-faint">Двойной клик или Enter — редактировать · печатай на выделенной — пишет сразу · Shift+клик — диапазон · клик по номеру строки / букве колонки — выделить целиком, затем «− строка»/«− колонка» удалит именно её · Ctrl/⌘+V — вставка из таблиц · #ИмяЛиста — ссылка.</p>
+        <p className="mt-3 text-[11px] text-faint">Двойной клик или Enter — редактировать · печатай на выделенной — пишет сразу · Shift+клик — диапазон · Ctrl/⌘+C / X / V — копировать / вырезать / вставить (в т.ч. несколько ячеек и из таблиц) · «+ кол ←/→» — добавить колонку слева/справа от выделенной · тяни правый край буквы колонки — ширина, нижний край номера строки — высота · клик по номеру строки / букве колонки — выделить целиком · #ИмяЛиста — ссылка.</p>
       </div>
     </div>
   )
@@ -380,5 +465,5 @@ function normalizeContent(content) {
   const rows = content?.rows?.length
     ? content.rows.map((row) => columns.map((_, c) => ({ ...blankCell(), ...(row[c] || {}) })))
     : Array.from({ length: 6 }, () => columns.map(blankCell))
-  return { columns, rows, merges: content?.merges || [] }
+  return { columns, rows, merges: content?.merges || [], rowHeights: content?.rowHeights || [] }
 }
