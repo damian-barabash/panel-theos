@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { Spinner, useToast } from '../../components/ui'
+import { useAuth } from '../../context/AuthContext'
 import {
   listSheets, createSheet, duplicateSheet, patchSheet, deleteSheet,
   reorderSheets, saveContent,
 } from './chymApi'
+import { useSheetCollab, colorFor, displayName, initials } from './presence'
 import { titleIndex } from './hashtags'
 import { SheetTabs } from './SheetTabs'
 import { SheetListDrawer } from './SheetListDrawer'
@@ -14,11 +16,20 @@ import MindmapSheet from './MindmapSheet'
 
 export default function ChymWriter() {
   const toast = useToast()
+  const { user } = useAuth()
   const [sheets, setSheets] = useState(null)
   const [activeId, setActiveId] = useState(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [graphOpen, setGraphOpen] = useState(false)
   const saveTimers = useRef({})
+
+  // Identity for live collaboration (presence + cursors). Stable per user.
+  const me = useMemo(
+    () => (user
+      ? { uid: user.id, name: displayName(user.email), color: colorFor(user.id) }
+      : null),
+    [user],
+  )
 
   const load = useCallback(async (keepActive) => {
     const data = await listSheets()
@@ -34,6 +45,9 @@ export default function ChymWriter() {
 
   const active = sheets?.find((s) => s.id === activeId) ?? null
   const index = useMemo(() => titleIndex(sheets ?? []), [sheets])
+
+  // Live collaboration channel for the active sheet (presence + broadcast).
+  const collab = useSheetCollab(active?.id, me)
 
   const goToSheet = useCallback((id) => {
     setActiveId(id)
@@ -102,6 +116,7 @@ export default function ChymWriter() {
         <span className="pixel-title text-[11px] xs:text-xs">3DD WRITER</span>
         <span className="label truncate hidden sm:block">{active ? active.title : '—'}</span>
         <div className="ml-auto flex items-center gap-1.5">
+          <PeerAvatars peers={collab.peers} />
           <IconBtn title="Список листов" onClick={() => setDrawerOpen(true)}>☰</IconBtn>
           <IconBtn title="Граф связей" onClick={() => setGraphOpen(true)}>❖</IconBtn>
         </div>
@@ -116,7 +131,7 @@ export default function ChymWriter() {
         ) : active.type === 'doc' ? (
           <DocSheet key={active.id} sheet={active} index={index} onChange={onContentChange} onFont={onFont} goToSheet={goToSheet} />
         ) : active.type === 'table' ? (
-          <TableSheet key={active.id} sheet={active} index={index} onChange={onContentChange} onFont={onFont} goToSheet={goToSheet} />
+          <TableSheet key={active.id} sheet={active} index={index} onChange={onContentChange} onFont={onFont} goToSheet={goToSheet} collab={collab} />
         ) : (
           <MindmapSheet key={active.id} sheet={active} index={index} onChange={onContentChange} goToSheet={goToSheet} />
         )}
@@ -159,5 +174,34 @@ function IconBtn({ children, title, onClick }) {
     >
       {children}
     </button>
+  )
+}
+
+// Colored initials of everyone else viewing this sheet right now.
+function PeerAvatars({ peers }) {
+  if (!peers?.length) return null
+  return (
+    <div className="mr-1 flex items-center -space-x-1.5">
+      {peers.slice(0, 5).map((p) => (
+        <span
+          key={p.uid}
+          title={`${p.name} — ${p.editing ? 'редактирует' : 'смотрит'}`}
+          className="flex h-7 w-7 items-center justify-center rounded-full border-2 text-[11px] font-bold"
+          style={{
+            background: `${p.color}22`,
+            borderColor: p.color,
+            color: p.color,
+            boxShadow: p.editing ? `0 0 0 2px ${p.color}55` : 'none',
+          }}
+        >
+          {initials(p.name)}
+        </span>
+      ))}
+      {peers.length > 5 && (
+        <span className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-line2 bg-surface2 text-[10px] text-muted">
+          +{peers.length - 5}
+        </span>
+      )}
+    </div>
   )
 }

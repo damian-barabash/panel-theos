@@ -11,7 +11,10 @@ const colLetter = (i) => {
 }
 const blankCell = () => ({ t: '', bg: null, bold: false, align: 'left', valign: 'top', font: null })
 
-export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }) {
+const noop = () => {}
+
+export default function TableSheet({ sheet, index, onChange, onFont, goToSheet, collab }) {
+  const { peers = [], liveEdits = {}, track = noop, broadcast = noop, setOnCommit = noop } = collab || {}
   const [data, setData] = useState(() => normalizeContent(sheet.content))
   const [sel, setSel] = useState({ r1: 0, c1: 0, r2: 0, c2: 0 })
   // editing = { r, c, seed? } — seed (a typed char) replaces cell content on entry.
@@ -21,6 +24,7 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
   const dragging = useRef(false)
   const dragAxis = useRef(null) // 'cell' | 'row' | 'col' — что тянем при drag-выделении
   const cancelEdit = useRef(false)
+  const editBcast = useRef({ t: 0, timer: null }) // throttle live-typing broadcast
 
   // End drag-selection wherever the mouse is released.
   useEffect(() => {
@@ -29,7 +33,33 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
     return () => window.removeEventListener('mouseup', up)
   }, [])
 
-  const commit = useCallback((next) => { setData(next); onChange(next) }, [onChange])
+  // ── Live collaboration ─────────────────────────────────────────────────────
+  // Every local change broadcasts the full content so peers converge instantly
+  // (cell text, structure, formatting, sizes — all in one path). Lightweight for
+  // a planning sheet. Live keystrokes use the separate `edit` event below.
+  const commit = useCallback((next) => {
+    setData(next); onChange(next); broadcast('commit', { content: next })
+  }, [onChange, broadcast])
+
+  // Share my selection (so peers see where I am) and editing flag.
+  useEffect(() => { track({ sel: norm(sel) }) }, [sel, track])
+  useEffect(() => { track({ editing: !!editing }) }, [editing, track])
+
+  // Apply a peer's broadcast: full-content sync (display only — no re-save, the
+  // sender already persists; avoids save loops).
+  useEffect(() => {
+    setOnCommit((p) => { if (p?.content) setData(p.content) })
+    return () => setOnCommit(noop)
+  }, [setOnCommit])
+
+  // Throttled broadcast of the cell text I'm currently typing.
+  const bcastEdit = useCallback((r, c, text) => {
+    const now = Date.now()
+    const send = () => { editBcast.current.t = Date.now(); broadcast('edit', { r, c, text }) }
+    const since = now - editBcast.current.t
+    if (since >= 120) { clearTimeout(editBcast.current.timer); editBcast.current.timer = null; send() }
+    else if (!editBcast.current.timer) editBcast.current.timer = setTimeout(() => { editBcast.current.timer = null; send() }, 120 - since)
+  }, [broadcast])
 
   // Type-to-edit (печатаешь на выделенной ячейке — сразу пишет) + Enter to edit.
   useEffect(() => {
@@ -230,7 +260,7 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
     const up = () => {
       window.removeEventListener('mousemove', move)
       window.removeEventListener('mouseup', up)
-      setData((d) => { onChange(d); return d })
+      setData((d) => { onChange(d); broadcast('commit', { content: d }); return d })
     }
     window.addEventListener('mousemove', move)
     window.addEventListener('mouseup', up)
@@ -252,7 +282,7 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
     const up = () => {
       window.removeEventListener('mousemove', move)
       window.removeEventListener('mouseup', up)
-      setData((d) => { onChange(d); return d })
+      setData((d) => { onChange(d); broadcast('commit', { content: d }); return d })
     }
     window.addEventListener('mousemove', move)
     window.addEventListener('mouseup', up)
@@ -278,6 +308,26 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
   const N = norm(sel)
   const colHeadSel = (ci) => N.r1 === 0 && N.r2 === data.rows.length - 1 && ci >= N.c1 && ci <= N.c2
   const rowHeadSel = (r) => N.c1 === 0 && N.c2 === data.columns.length - 1 && r >= N.r1 && r <= N.r2
+
+  // ── Peer cursors / live typing (collaboration) ──────────────────────────────
+  // Each peer's selection becomes a colored range; its top-left cell gets a name
+  // tag. peerByUid maps live-edit uids back to color/name.
+  const peerByUid = {}
+  for (const p of peers) peerByUid[p.uid] = p
+  const peerRanges = peers
+    .filter((p) => p.sel)
+    .map((p) => ({ ...norm(p.sel), color: p.color, name: p.name }))
+  const peerAt = (r, c) => {
+    for (const pr of peerRanges) if (r >= pr.r1 && r <= pr.r2 && c >= pr.c1 && c <= pr.c2) return pr
+    return null
+  }
+  // cellKey -> { text, color, name } for a peer currently typing in that cell.
+  const liveByCell = {}
+  for (const uid of Object.keys(liveEdits)) {
+    const le = liveEdits[uid]
+    const p = peerByUid[uid]
+    if (le && p) liveByCell[`${le.r}:${le.c}`] = { text: le.text, color: p.color, name: p.name }
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -358,6 +408,9 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
                   if (covered.has(`${r}:${c}`)) return null
                   const span = spanAt.get(`${r}:${c}`)
                   const isEditing = editing && editing.r === r && editing.c === c
+                  const peer = peerAt(r, c)
+                  const isPeerAnchor = peer && r === peer.r1 && c === peer.c1
+                  const live = liveByCell[`${r}:${c}`]
                   return (
                     <td
                       key={c}
@@ -378,20 +431,32 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
                       }}
                       onDoubleClick={() => setEditing({ r, c })}
                       style={{
+                        position: 'relative',
                         background: cell.bg || 'transparent',
                         textAlign: cell.align || 'left',
                         verticalAlign: cell.valign || 'top',
                         fontWeight: cell.bold ? 700 : 400,
                         fontFamily: cell.font ? fontCss(cell.font) : undefined,
                         color: cell.bg ? '#1A1030' : '#F2EAD3',
-                        // Full box outline on selection (border-collapse would
+                        // A peer's selection shows as a colored inset ring (coexists
+                        // with my own gold outline below).
+                        ...(peer ? { boxShadow: `inset 0 0 0 2px ${peer.color}` } : {}),
+                        // Full box outline on my selection (border-collapse would
                         // otherwise only show on the bottom/right shared edges).
                         ...(inSel(r, c)
-                          ? { outline: '2px solid #E8B547', outlineOffset: '-2px', position: 'relative', zIndex: 1 }
+                          ? { outline: '2px solid #E8B547', outlineOffset: '-2px', zIndex: 1 }
                           : {}),
                       }}
                       className="h-7 border border-line px-1.5 py-1 text-[13px]"
                     >
+                      {(isPeerAnchor || live) && (
+                        <span
+                          className="pointer-events-none absolute -top-[14px] left-0 z-30 whitespace-nowrap rounded-sm px-1 text-[9px] font-bold leading-[14px]"
+                          style={{ background: live?.color || peer.color, color: '#1A1030' }}
+                        >
+                          {live?.name || peer.name}
+                        </span>
+                      )}
                       {isEditing ? (
                         <div
                           contentEditable
@@ -408,18 +473,24 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
                             s.removeAllRanges()
                             s.addRange(range)
                           }}
+                          onInput={(e) => bcastEdit(r, c, e.currentTarget.textContent)}
                           onKeyDown={(e) => {
                             e.stopPropagation()
                             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.blur() }
-                            else if (e.key === 'Escape') { e.preventDefault(); cancelEdit.current = true; setEditing(null) }
+                            else if (e.key === 'Escape') { e.preventDefault(); cancelEdit.current = true; broadcast('edit_end', {}); setEditing(null) }
                           }}
                           onBlur={(e) => {
-                            if (cancelEdit.current) { cancelEdit.current = false; setEditing(null); return }
+                            if (cancelEdit.current) { cancelEdit.current = false; broadcast('edit_end', {}); setEditing(null); return }
                             setCellText(r, c, e.currentTarget.textContent)
                             setEditing(null)
                           }}
                           className="min-w-[40px] outline-none"
                         />
+                      ) : live ? (
+                        // A peer is typing here right now — show their live text.
+                        <span className="whitespace-pre-wrap break-words italic" style={{ color: live.color }}>
+                          {live.text || '…'}
+                        </span>
                       ) : (
                         <span className="whitespace-pre-wrap break-words">
                           {splitWithTags(cell.t, index).map((p, i) =>
@@ -444,7 +515,7 @@ export default function TableSheet({ sheet, index, onChange, onFont, goToSheet }
             ))}
           </tbody>
         </table>
-        <p className="mt-3 text-[11px] text-faint">Двойной клик или Enter — редактировать · печатай на выделенной — пишет сразу · Shift+клик — диапазон · Ctrl/⌘+C / X / V — копировать / вырезать / вставить (в т.ч. несколько ячеек и из таблиц) · «+ кол ←/→» — добавить колонку слева/справа от выделенной · тяни правый край буквы колонки — ширина, нижний край номера строки — высота · клик по номеру строки / букве колонки — выделить целиком · #ИмяЛиста — ссылка.</p>
+        <p className="mt-3 text-[11px] text-faint">Двойной клик или Enter — редактировать · печатай на выделенной — пишет сразу · Shift+клик — диапазон · Ctrl/⌘+C / X / V — копировать / вырезать / вставить (в т.ч. несколько ячеек и из таблиц) · «+ кол ←/→» — добавить колонку слева/справа от выделенной · тяни правый край буквы колонки — ширина, нижний край номера строки — высота · клик по номеру строки / букве колонки — выделить целиком · #ИмяЛиста — ссылка · видно, кто ещё на листе (аватары сверху) и что он редактирует — в реальном времени.</p>
       </div>
     </div>
   )
