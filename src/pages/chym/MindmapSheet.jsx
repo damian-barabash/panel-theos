@@ -1,6 +1,6 @@
 import { createContext, useContext, useCallback, useMemo, useState, useRef } from 'react'
 import {
-  ReactFlow, Background, Controls, Handle, Position,
+  ReactFlow, Background, Controls, Handle, Position, ConnectionMode,
   applyNodeChanges, applyEdgeChanges, addEdge,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
@@ -8,6 +8,16 @@ import { PASTELS } from './constants'
 import { splitWithTags } from './hashtags'
 
 const Ctx = createContext(null)
+
+// Точки коннекта на всех четырёх сторонах. В ConnectionMode.Loose любой хэндл
+// работает и как источник, и как цель → любую точку можно соединить с любой.
+const HANDLE_SIDES = [
+  { id: 't', position: Position.Top },
+  { id: 'r', position: Position.Right },
+  { id: 'b', position: Position.Bottom },
+  { id: 'l', position: Position.Left },
+]
+const handleStyle = { width: 10, height: 10, background: '#160C2A', border: '2px solid #E8B547' }
 
 function CardNode({ id, data }) {
   const { setText, setColor, removeNode, index, goToSheet } = useContext(Ctx)
@@ -17,8 +27,9 @@ function CardNode({ id, data }) {
       className="min-w-[120px] max-w-[240px] border-2 border-bgDeep px-3 py-2 text-[13px] shadow-md"
       style={{ background: data.color || '#D6C8F2', color: '#1A1030' }}
     >
-      <Handle type="target" position={Position.Left} style={{ background: '#160C2A' }} />
-      <Handle type="source" position={Position.Right} style={{ background: '#160C2A' }} />
+      {HANDLE_SIDES.map((h) => (
+        <Handle key={h.id} id={h.id} type="source" position={h.position} style={handleStyle} />
+      ))}
       {editing ? (
         <textarea
           autoFocus
@@ -57,7 +68,7 @@ const nodeTypes = { card: CardNode }
 export default function MindmapSheet({ sheet, index, onChange, goToSheet }) {
   const toRf = (c) => ({
     nodes: (c?.nodes || []).map((n) => ({ id: n.id, type: 'card', position: { x: n.x, y: n.y }, data: { text: n.text, color: n.color } })),
-    edges: (c?.edges || []).map((e) => ({ id: e.id, source: e.source, target: e.target })),
+    edges: (c?.edges || []).map((e) => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle ?? null, targetHandle: e.targetHandle ?? null })),
   })
   const init = useMemo(() => toRf(sheet.content), [sheet.id]) // eslint-disable-line
   const [nodes, setNodes] = useState(init.nodes)
@@ -68,7 +79,7 @@ export default function MindmapSheet({ sheet, index, onChange, goToSheet }) {
   const persist = useCallback((nds, eds) => {
     onChange({
       nodes: nds.map((n) => ({ id: n.id, x: n.position.x, y: n.position.y, text: n.data.text, color: n.data.color })),
-      edges: eds.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+      edges: eds.map((e) => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle ?? null, targetHandle: e.targetHandle ?? null })),
     })
   }, [onChange])
 
@@ -108,7 +119,7 @@ export default function MindmapSheet({ sheet, index, onChange, goToSheet }) {
       <div className="flex h-full flex-col">
         <div className="flex items-center gap-1 border-b-2 border-line bg-bg/60 px-2 py-1.5">
           <button onClick={addCard} className="border-2 border-line px-2 py-1 text-xs text-muted hover:text-ink">+ Карточка</button>
-          <span className="label ml-2 hidden sm:block">Тяни от правого края карточки к другой — связь · #ИмяЛиста — ссылка</span>
+          <span className="label ml-2 hidden sm:block">Тяни от любой точки карточки к любой точке другой — связь · #ИмяЛиста — ссылка</span>
         </div>
         <div className="min-h-0 flex-1" style={{ background: '#160C2A' }}>
           <ReactFlow
@@ -118,6 +129,7 @@ export default function MindmapSheet({ sheet, index, onChange, goToSheet }) {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            connectionMode={ConnectionMode.Loose}
             fitView
             proOptions={{ hideAttribution: true }}
             defaultEdgeOptions={{ style: { stroke: '#E8B547', strokeWidth: 2 } }}
