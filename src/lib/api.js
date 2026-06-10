@@ -75,6 +75,13 @@ export function adminRemoveItem(user_id, item_key) {
 export function adminSetStack(user_id, item_type, item_ref, quantity) {
   return callFunction('panel-admin', { action: 'set_stack', user_id, item_type, item_ref, quantity })
 }
+export function adminSetPassword(user_id, password) {
+  return callFunction('panel-admin', { action: 'set_password', user_id, password })
+}
+// Deletes the player account + all their game data (irreversible)
+export function adminDeletePlayer(user_id) {
+  return callFunction('panel-admin', { action: 'delete_player', user_id })
+}
 
 // ── Panel user management (via panel-user edge function) ─────────────────────
 export function createUser({ email, password }) {

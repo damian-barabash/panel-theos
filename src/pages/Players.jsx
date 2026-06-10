@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import {
   adminDashboard, adminListPlayers, adminPlayerDetail,
   adminUpdateProfile, adminGiveItem, adminRemoveItem, adminSetStack,
+  adminSetPassword, adminDeletePlayer,
 } from '../lib/api'
 import { PixelFrame, PixelButton, Spinner, useToast } from '../components/ui'
 import { ITEMS, FISTS, itemByKey, rarityOf, CLASS_LABEL } from '../lib/itemCatalog'
@@ -28,6 +29,8 @@ export default function Players() {
   const [dash, setDash] = useState(null)
   const [players, setPlayers] = useState(null)
   const [selected, setSelected] = useState(null) // user_id
+  const [query, setQuery] = useState('')
+  const [sortKey, setSortKey] = useState('updated_at')
   // reference data for resolving stack/pet names (anon-readable game tables)
   const [petFood, setPetFood] = useState([])
   const [petSpecies, setPetSpecies] = useState([])
@@ -52,6 +55,20 @@ export default function Players() {
     })()
   }, [])
 
+  const shown = useMemo(() => {
+    let list = players ?? []
+    const q = query.trim().toLowerCase()
+    if (q) list = list.filter((p) => (p.name ?? '').toLowerCase().includes(q) || (p.login ?? '').toLowerCase().includes(q))
+    const sorters = {
+      updated_at: (a, b) => new Date(b.updated_at ?? 0) - new Date(a.updated_at ?? 0),
+      gold: (a, b) => (b.gold ?? 0) - (a.gold ?? 0),
+      gems: (a, b) => (b.gems ?? 0) - (a.gems ?? 0),
+      level: (a, b) => (b.level ?? 0) - (a.level ?? 0),
+      name: (a, b) => (a.name ?? '').localeCompare(b.name ?? '', 'ru'),
+    }
+    return [...list].sort(sorters[sortKey] ?? sorters.updated_at)
+  }, [players, query, sortKey])
+
   return (
     <div className="mx-auto max-w-5xl">
       <div className="mb-4 flex items-center justify-between gap-2">
@@ -66,7 +83,35 @@ export default function Players() {
       ) : players.length === 0 ? (
         <p className="text-muted">Игроков пока нет.</p>
       ) : (
-        <PlayerList players={players} onPick={setSelected} />
+        <>
+          <div className="mb-3 flex flex-col gap-2 xs:flex-row xs:items-center">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Поиск по имени или логину…"
+              className="min-w-0 flex-1 rounded-none border-2 border-line bg-surface2 px-3 py-1.5 text-sm text-ink outline-none focus:border-gold"
+            />
+            <div className="flex items-center gap-2">
+              <span className="label text-faint">сорт.</span>
+              <select
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value)}
+                className="rounded-none border-2 border-line bg-surface2 px-2 py-1.5 text-sm text-ink outline-none focus:border-gold"
+              >
+                <option value="updated_at">по активности</option>
+                <option value="gold">по золоту</option>
+                <option value="gems">по кристаллам</option>
+                <option value="level">по уровню</option>
+                <option value="name">по имени</option>
+              </select>
+            </div>
+          </div>
+          {shown.length === 0 ? (
+            <p className="text-muted">Ничего не найдено.</p>
+          ) : (
+            <PlayerList players={shown} onPick={setSelected} />
+          )}
+        </>
       )}
 
       {selected && (
@@ -76,6 +121,7 @@ export default function Players() {
           petSpecies={petSpecies}
           onClose={() => setSelected(null)}
           onMutated={loadAll}
+          onDeleted={() => { setSelected(null); loadAll() }}
         />
       )}
     </div>
@@ -150,14 +196,29 @@ const STAT_FIELDS = [
   { key: 'stamina', label: 'Выносливость', accent: 'text-warn' },
 ]
 
-function PlayerDetail({ userId, petFood, petSpecies, onClose, onMutated }) {
+function PlayerDetail({ userId, petFood, petSpecies, onClose, onMutated, onDeleted }) {
   const toast = useToast()
   const [data, setData] = useState(null)
   const [form, setForm] = useState({})
   const [busy, setBusy] = useState(false)
+  const [logs, setLogs] = useState(null)
+  const [pwd, setPwd] = useState('')
+  const [delConfirm, setDelConfirm] = useState('')
 
   const foodById = useMemo(() => Object.fromEntries(petFood.map((f) => [f.id, f])), [petFood])
   const speciesById = useMemo(() => Object.fromEntries(petSpecies.map((s) => [s.id, s])), [petSpecies])
+
+  const loadLogs = useCallback(async () => {
+    // panel_logs is admin-readable directly (no edge function needed)
+    const { data: rows } = await supabase
+      .from('panel_logs')
+      .select('action, summary, created_at, actor_email')
+      .eq('entity', 'player')
+      .eq('entity_key', userId)
+      .order('created_at', { ascending: false })
+      .limit(50)
+    setLogs(rows ?? [])
+  }, [userId])
 
   const load = useCallback(async () => {
     try {
@@ -168,7 +229,7 @@ function PlayerDetail({ userId, petFood, petSpecies, onClose, onMutated }) {
       setForm(f)
     } catch (e) { toast.error(e.message) }
   }, [userId, toast])
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load(); loadLogs() }, [load, loadLogs])
 
   const dirty = data && STAT_FIELDS.some((s) => Number(form[s.key]) !== (data.profile[s.key] ?? 0))
 
@@ -200,8 +261,32 @@ function PlayerDetail({ userId, petFood, petSpecies, onClose, onMutated }) {
     try { await adminSetStack(userId, item_type, item_ref, Math.max(0, quantity)); await load() }
     catch (e) { toast.error(e.message) } finally { setBusy(false) }
   }
+  // delta = number to add (negative ok); null = reset to 0
+  async function bumpCurrency(field, delta) {
+    setBusy(true)
+    try {
+      const cur = data.profile[field] ?? 0
+      const next = delta == null ? 0 : Math.max(0, cur + delta)
+      const r = await adminUpdateProfile(userId, { [field]: next })
+      setData((d) => ({ ...d, profile: r.profile }))
+      setForm((f) => ({ ...f, [field]: r.profile[field] }))
+      await loadLogs(); onMutated?.()
+    } catch (e) { toast.error(e.message) } finally { setBusy(false) }
+  }
+  async function changePassword() {
+    if (pwd.trim().length < 6) { toast.error('Пароль ≥ 6 символов'); return }
+    setBusy(true)
+    try { await adminSetPassword(userId, pwd.trim()); setPwd(''); toast.ok('Пароль изменён'); await loadLogs() }
+    catch (e) { toast.error(e.message) } finally { setBusy(false) }
+  }
+  async function deletePlayer() {
+    setBusy(true)
+    try { await adminDeletePlayer(userId); toast.ok('Игрок удалён'); onDeleted?.() }
+    catch (e) { toast.error(e.message); setBusy(false) }
+  }
 
   const p = data?.profile
+  const delMatch = data && delConfirm.trim() === (p?.name ?? '')
 
   return (
     <div className="fixed inset-0 z-40 flex justify-center overflow-y-auto bg-bgDeep/80 p-3 sm:p-6" onClick={onClose}>
@@ -239,6 +324,16 @@ function PlayerDetail({ userId, petFood, petSpecies, onClose, onMutated }) {
                       />
                     </label>
                   ))}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className="label text-gold">золото</span>
+                  <button disabled={busy} onClick={() => bumpCurrency('gold', 1000)} className="border-2 border-line px-2 py-1 text-xs text-gold hover:border-gold disabled:opacity-40">+1000</button>
+                  <button disabled={busy} onClick={() => bumpCurrency('gold', 100)} className="border-2 border-line px-2 py-1 text-xs text-gold hover:border-gold disabled:opacity-40">+100</button>
+                  <button disabled={busy} onClick={() => bumpCurrency('gold', null)} className="border-2 border-line px-2 py-1 text-xs text-muted hover:border-gold disabled:opacity-40">0</button>
+                  <span className="label ml-2 text-crystal">кристаллы</span>
+                  <button disabled={busy} onClick={() => bumpCurrency('gems', 100)} className="border-2 border-line px-2 py-1 text-xs text-crystal hover:border-gold disabled:opacity-40">+100</button>
+                  <button disabled={busy} onClick={() => bumpCurrency('gems', 10)} className="border-2 border-line px-2 py-1 text-xs text-crystal hover:border-gold disabled:opacity-40">+10</button>
+                  <button disabled={busy} onClick={() => bumpCurrency('gems', null)} className="border-2 border-line px-2 py-1 text-xs text-muted hover:border-gold disabled:opacity-40">0</button>
                 </div>
                 <div className="mt-2 flex items-center gap-2">
                   <PixelButton onClick={saveStats} disabled={!dirty || busy}>
@@ -323,6 +418,59 @@ function PlayerDetail({ userId, petFood, petSpecies, onClose, onMutated }) {
                     ))}
                   </div>
                 )}
+              </section>
+
+              {/* audit: panel_logs for this player */}
+              <section>
+                <div className="label mb-2 text-faint">История изменений ({logs?.length ?? 0})</div>
+                {logs == null ? (
+                  <div className="flex items-center gap-2 text-xs text-faint"><Spinner /> …</div>
+                ) : logs.length === 0 ? (
+                  <p className="text-xs text-faint">Изменений из панели не было.</p>
+                ) : (
+                  <div className="max-h-44 overflow-y-auto flex flex-col gap-1">
+                    {logs.map((l, i) => (
+                      <div key={i} className="flex items-center gap-2 text-xs">
+                        <span className="w-28 shrink-0 text-faint">{relTime(l.created_at)}</span>
+                        <span className="min-w-0 flex-1 truncate text-muted">{l.summary ?? l.action}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              {/* account: password + delete (danger) */}
+              <section className="border-t-2 border-line pt-4">
+                <div className="label mb-2 text-danger">Аккаунт</div>
+                <div className="flex flex-col gap-2 xs:flex-row xs:items-center">
+                  <input
+                    type="text"
+                    value={pwd}
+                    onChange={(e) => setPwd(e.target.value)}
+                    placeholder="Новый пароль (≥ 6)"
+                    className="min-w-0 flex-1 rounded-none border-2 border-line bg-surface2 px-3 py-1.5 text-sm text-ink outline-none focus:border-gold"
+                  />
+                  <PixelButton variant="ghost" disabled={busy || pwd.trim().length < 6} onClick={changePassword}>
+                    Сменить пароль
+                  </PixelButton>
+                </div>
+                <div className="mt-3 border-2 border-danger/60 bg-danger/5 px-3 py-2.5">
+                  <div className="text-xs text-muted">
+                    Удаление безвозвратно сотрёт аккаунт и все данные игрока (профиль, задания,
+                    инвентарь, питомцы, чат). Впиши имя <span className="text-ink">«{p.name}»</span> для подтверждения.
+                  </div>
+                  <div className="mt-2 flex flex-col gap-2 xs:flex-row xs:items-center">
+                    <input
+                      value={delConfirm}
+                      onChange={(e) => setDelConfirm(e.target.value)}
+                      placeholder="Имя игрока"
+                      className="min-w-0 flex-1 rounded-none border-2 border-line bg-surface2 px-3 py-1.5 text-sm text-ink outline-none focus:border-danger"
+                    />
+                    <PixelButton variant="danger" disabled={busy || !delMatch} onClick={deletePlayer}>
+                      {busy ? <Spinner /> : 'Удалить игрока'}
+                    </PixelButton>
+                  </div>
+                </div>
               </section>
             </div>
           )}
