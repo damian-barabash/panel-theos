@@ -92,6 +92,10 @@ export default function MindmapSheet({ sheet, index, onChange, goToSheet }) {
   const onConnect = useCallback((conn) => {
     setEdges((eds) => { const next = addEdge({ ...conn, id: `e${Date.now()}` }, eds); persist(nodes, next); return next })
   }, [nodes, persist])
+  // Отвязать: двойной клик по связи удаляет её
+  const onEdgeDoubleClick = useCallback((_, edge) => {
+    setEdges((eds) => { const next = eds.filter((e) => e.id !== edge.id); persist(nodes, next); return next })
+  }, [nodes, persist])
 
   const mutateNode = (id, patch) => setNodes((nds) => {
     const next = nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...patch } } : n))
@@ -119,7 +123,7 @@ export default function MindmapSheet({ sheet, index, onChange, goToSheet }) {
       <div className="flex h-full flex-col">
         <div className="flex items-center gap-1 border-b-2 border-line bg-bg/60 px-2 py-1.5">
           <button onClick={addCard} className="border-2 border-line px-2 py-1 text-xs text-muted hover:text-ink">+ Карточка</button>
-          <span className="label ml-2 hidden sm:block">Тяни от любой точки карточки к любой точке другой — связь · #ИмяЛиста — ссылка</span>
+          <span className="label ml-2 hidden sm:block">Тяни от любой точки к любой — связь · двойной клик по связи — отвязать · #ИмяЛиста — ссылка</span>
         </div>
         <div className="min-h-0 flex-1" style={{ background: '#160C2A' }}>
           <ReactFlow
@@ -129,6 +133,7 @@ export default function MindmapSheet({ sheet, index, onChange, goToSheet }) {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            onEdgeDoubleClick={onEdgeDoubleClick}
             connectionMode={ConnectionMode.Loose}
             fitView
             proOptions={{ hideAttribution: true }}
