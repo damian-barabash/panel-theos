@@ -3,6 +3,7 @@ import { Logo } from './Logo'
 
 // Nav items are config-driven — add a route here to grow the menu.
 export const NAV = [
+  { to: '/players', label: 'Игроки', icon: '☷' },
   { to: '/logs', label: 'Логи', icon: '▤' },
   { to: '/prompts', label: 'Промт-мастер', icon: '✦' },
   { to: '/chym', label: '3DD Writer', icon: '✎' },

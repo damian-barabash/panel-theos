@@ -48,6 +48,34 @@ export function playerContext(user_id) {
   return callFunction('panel-player', { action: 'context', user_id })
 }
 
+// ── Players admin (via panel-admin edge function) ───────────────────────────
+// Full read + mutations across ALL players. service-role behind the panel-admin
+// gate (bypasses the game's per-row RLS). Mutations are logged server-side.
+export function adminDashboard() {
+  return callFunction('panel-admin', { action: 'dashboard' })
+}
+export function adminListPlayers() {
+  return callFunction('panel-admin', { action: 'list' })
+}
+export function adminPlayerDetail(user_id) {
+  return callFunction('panel-admin', { action: 'detail', user_id })
+}
+// patch: whitelisted numeric fields (gold, gems, level, xp_current, total_xp,
+// strength, intellect, agility, stamina)
+export function adminUpdateProfile(user_id, patch) {
+  return callFunction('panel-admin', { action: 'update_profile', user_id, patch })
+}
+export function adminGiveItem(user_id, item_key) {
+  return callFunction('panel-admin', { action: 'give_item', user_id, item_key })
+}
+export function adminRemoveItem(user_id, item_key) {
+  return callFunction('panel-admin', { action: 'remove_item', user_id, item_key })
+}
+// item_type: 'egg' | 'food', item_ref: 'egg' or a pet_food.id, quantity: absolute >= 0
+export function adminSetStack(user_id, item_type, item_ref, quantity) {
+  return callFunction('panel-admin', { action: 'set_stack', user_id, item_type, item_ref, quantity })
+}
+
 // ── Panel user management (via panel-user edge function) ─────────────────────
 export function createUser({ email, password }) {
   return callFunction('panel-user', { action: 'create', email, password })
