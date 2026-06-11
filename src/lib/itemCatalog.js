@@ -45,6 +45,10 @@ export const ITEMS = [
   { key: 'potion_berserker', name: 'Зелье берсерка', kind: 'potion', rarity: 'rare' },
   { key: 'potion_sage', name: 'Зелье мудреца', kind: 'potion', rarity: 'epic' },
   { key: 'elixir_immortal', name: 'Эликсир бессмертия', kind: 'potion', rarity: 'legendary' },
+  // Особый расходник: дроп золотого сундука ~0.02% (app_config
+  // gold_chest_class_potion_pct). Выпил → заново выбирает фракцию/класс/пол/
+  // причёску. Не продаётся в магазине; у игрока может быть максимум 1.
+  { key: 'potion_class_change', name: 'Зелье смены класса', kind: 'potion', rarity: 'legendary' },
 ]
 
 // Стартовое оружие (выдаётся по умолчанию, не продаётся) — только для подписи.
