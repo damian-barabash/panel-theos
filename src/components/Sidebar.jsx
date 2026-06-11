@@ -8,6 +8,7 @@ export const NAV = [
   { to: '/prompts', label: 'Промт-мастер', icon: '✦' },
   { to: '/chym', label: '3DD Writer', icon: '✎' },
   { to: '/pets-food', label: 'Животные и еда', icon: '◆' },
+  { to: '/gear', label: 'Броня и оружие', icon: '⚔' },
   { to: '/settings', label: 'Обновления', icon: '⚙' },
 ]
 

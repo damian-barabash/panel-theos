@@ -2,11 +2,12 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import {
   adminDashboard, adminListPlayers, adminPlayerDetail,
-  adminUpdateProfile, adminGiveItem, adminRemoveItem, adminSetStack,
+  adminUpdateProfile, adminGiveItem, adminRemoveItem,
+  adminGiveGear, adminRemoveGear, adminSetStack,
   adminSetPassword, adminDeletePlayer,
 } from '../lib/api'
 import { PixelFrame, PixelButton, Spinner, useToast } from '../components/ui'
-import { ITEMS, FISTS, itemByKey, rarityOf, CLASS_LABEL } from '../lib/itemCatalog'
+import { ITEMS, itemByKey, rarityOf, CLASS_LABEL } from '../lib/itemCatalog'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function relTime(iso) {
@@ -31,9 +32,10 @@ export default function Players() {
   const [selected, setSelected] = useState(null) // user_id
   const [query, setQuery] = useState('')
   const [sortKey, setSortKey] = useState('updated_at')
-  // reference data for resolving stack/pet names (anon-readable game tables)
+  // reference data for resolving stack/pet/gear names (anon-readable game tables)
   const [petFood, setPetFood] = useState([])
   const [petSpecies, setPetSpecies] = useState([])
+  const [gearCatalog, setGearCatalog] = useState({ sets: [], pieces: [], weapons: [] })
 
   const loadAll = useCallback(async () => {
     try {
@@ -46,12 +48,16 @@ export default function Players() {
   useEffect(() => { loadAll() }, [loadAll])
   useEffect(() => {
     (async () => {
-      const [{ data: f }, { data: s }] = await Promise.all([
+      const [{ data: f }, { data: s }, { data: sets }, { data: pieces }, { data: weapons }] = await Promise.all([
         supabase.from('pet_food').select('id, name, quality').order('created_at'),
         supabase.from('pet_species').select('id, name, rarity'),
+        supabase.from('armor_sets').select('id, name, rarity, image_url'),
+        supabase.from('armor_pieces').select('id, set_id, slot, name'),
+        supabase.from('weapon_items').select('id, name, rarity, weapon_type, image_url'),
       ])
       setPetFood(f ?? [])
       setPetSpecies(s ?? [])
+      setGearCatalog({ sets: sets ?? [], pieces: pieces ?? [], weapons: weapons ?? [] })
     })()
   }, [])
 
@@ -119,6 +125,7 @@ export default function Players() {
           userId={selected}
           petFood={petFood}
           petSpecies={petSpecies}
+          gearCatalog={gearCatalog}
           onClose={() => setSelected(null)}
           onMutated={loadAll}
           onDeleted={() => { setSelected(null); loadAll() }}
@@ -197,7 +204,7 @@ const STAT_FIELDS = [
   { key: 'stamina', label: 'Выносливость', accent: 'text-warn', decimal: true },
 ]
 
-function PlayerDetail({ userId, petFood, petSpecies, onClose, onMutated, onDeleted }) {
+function PlayerDetail({ userId, petFood, petSpecies, gearCatalog, onClose, onMutated, onDeleted }) {
   const toast = useToast()
   const [data, setData] = useState(null)
   const [form, setForm] = useState({})
@@ -255,6 +262,17 @@ function PlayerDetail({ userId, petFood, petSpecies, onClose, onMutated, onDelet
   async function removeItem(key) {
     setBusy(true)
     try { await adminRemoveItem(userId, key); toast.ok('Забрано'); await load(); onMutated?.() }
+    catch (e) { toast.error(e.message) } finally { setBusy(false) }
+  }
+  async function giveGear(kind, refId) {
+    if (!refId) return
+    setBusy(true)
+    try { const r = await adminGiveGear(userId, kind, refId); toast[r.already ? 'info' : 'ok'](r.already ? 'Уже есть' : 'Выдано'); await load(); onMutated?.() }
+    catch (e) { toast.error(e.message) } finally { setBusy(false) }
+  }
+  async function removeGear(kind, refId) {
+    setBusy(true)
+    try { await adminRemoveGear(userId, kind, refId); toast.ok('Забрано'); await load(); onMutated?.() }
     catch (e) { toast.error(e.message) } finally { setBusy(false) }
   }
   async function setStack(item_type, item_ref, quantity) {
@@ -345,9 +363,36 @@ function PlayerDetail({ userId, petFood, petSpecies, onClose, onMutated, onDelet
                 </div>
               </section>
 
-              {/* inventory (weapons/potions) */}
+              {/* dynamic gear (user_items: armor pieces + weapons) */}
               <section>
-                <div className="label mb-2 text-faint">Инвентарь · оружие и зелья</div>
+                <div className="label mb-2 text-faint">Снаряжение · броня и оружие</div>
+                <GiveGearBar gearCatalog={gearCatalog} onGive={giveGear} disabled={busy}
+                  owned={new Set((data.gear ?? []).map((g) => `${g.kind}:${g.ref_id}`))} />
+                {(data.gear ?? []).length === 0 ? (
+                  <p className="mt-2 text-xs text-faint">Пусто.</p>
+                ) : (
+                  <div className="mt-2 flex flex-col gap-1.5">
+                    {(data.gear ?? []).map((row) => {
+                      const info = resolveGear(gearCatalog, row)
+                      const equipped = [p.equipped_helmet, p.equipped_chest, p.equipped_legs, p.equipped_weapon_item].includes(row.ref_id)
+                      return (
+                        <div key={row.id} className="flex items-center gap-2 border-2 border-line bg-surface px-2.5 py-1.5">
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: rarityOf(info.rarity).color }} />
+                          <span className="min-w-0 flex-1 truncate text-sm text-ink">{info.name}</span>
+                          {equipped && <span className="label text-ok">надето</span>}
+                          <span className="label text-faint">{info.kindLabel}</span>
+                          <button onClick={() => removeGear(row.kind, row.ref_id)} disabled={busy}
+                            className="text-xs text-danger hover:underline">Забрать</button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </section>
+
+              {/* special consumables (inventory: class potion etc.) */}
+              <section>
+                <div className="label mb-2 text-faint">Особые предметы</div>
                 <GiveItemBar onGive={giveItem} disabled={busy} owned={new Set(data.inventory.map((i) => i.item_key))} />
                 {data.inventory.length === 0 ? (
                   <p className="mt-2 text-xs text-faint">Пусто.</p>
@@ -356,13 +401,10 @@ function PlayerDetail({ userId, petFood, petSpecies, onClose, onMutated, onDelet
                     {data.inventory.map((row) => {
                       const it = itemByKey(row.item_key)
                       const r = rarityOf(it.rarity)
-                      const equipped = p.equipped_weapon === row.item_key || p.equipped_potion === row.item_key
                       return (
                         <div key={row.id} className="flex items-center gap-2 border-2 border-line bg-surface px-2.5 py-1.5">
                           <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: r.color }} />
                           <span className="min-w-0 flex-1 truncate text-sm text-ink">{it.name}</span>
-                          {equipped && <span className="label text-ok">надето</span>}
-                          <span className="label text-faint">{it.kind === 'potion' ? 'зелье' : 'оружие'}</span>
                           <button onClick={() => removeItem(row.item_key)} disabled={busy}
                             className="text-xs text-danger hover:underline">Забрать</button>
                         </div>
@@ -482,11 +524,64 @@ function PlayerDetail({ userId, petFood, petSpecies, onClose, onMutated, onDelet
   )
 }
 
-// ── Give item selector ───────────────────────────────────────────────────────
+// ── Gear helpers ─────────────────────────────────────────────────────────────
+const SLOT_LABEL = { helmet: 'Шлем', chest: 'Нагрудник', legs: 'Поножи' }
+
+function resolveGear(catalog, row) {
+  if (row.kind === 'weapon') {
+    const w = catalog.weapons.find((x) => x.id === row.ref_id)
+    return { name: w?.name ?? row.ref_id, rarity: w?.rarity ?? 'common', kindLabel: 'оружие' }
+  }
+  const piece = catalog.pieces.find((x) => x.id === row.ref_id)
+  const set = piece && catalog.sets.find((x) => x.id === piece.set_id)
+  return {
+    name: piece ? `${piece.name}` : row.ref_id,
+    rarity: set?.rarity ?? 'common',
+    kindLabel: piece ? (SLOT_LABEL[piece.slot] ?? 'броня').toLowerCase() : 'броня',
+  }
+}
+
+// ── Give gear selector (динамический каталог) ────────────────────────────────
+function GiveGearBar({ gearCatalog, onGive, disabled, owned }) {
+  const [val, setVal] = useState('')
+  const pieceLabel = (piece) => {
+    const set = gearCatalog.sets.find((x) => x.id === piece.set_id)
+    return `${piece.name} · ${SLOT_LABEL[piece.slot] ?? piece.slot} · ${rarityOf(set?.rarity).label}`
+  }
+  return (
+    <div className="flex gap-2">
+      <select
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        className="min-w-0 flex-1 rounded-none border-2 border-line bg-surface2 px-2 py-1.5 text-sm text-ink outline-none focus:border-gold"
+      >
+        <option value="">Выдать снаряжение…</option>
+        <optgroup label="Броня">
+          {gearCatalog.pieces.map((piece) => (
+            <option key={piece.id} value={`armor:${piece.id}`} disabled={owned.has(`armor:${piece.id}`)}>
+              {pieceLabel(piece)}{owned.has(`armor:${piece.id}`) ? ' (есть)' : ''}
+            </option>
+          ))}
+        </optgroup>
+        <optgroup label="Оружие">
+          {gearCatalog.weapons.map((w) => (
+            <option key={w.id} value={`weapon:${w.id}`} disabled={owned.has(`weapon:${w.id}`)}>
+              {w.name} · {rarityOf(w.rarity).label}{owned.has(`weapon:${w.id}`) ? ' (есть)' : ''}
+            </option>
+          ))}
+        </optgroup>
+      </select>
+      <PixelButton variant="crystal" disabled={!val || disabled}
+        onClick={() => { const [kind, id] = val.split(':'); onGive(kind, id); setVal('') }}>
+        Выдать
+      </PixelButton>
+    </div>
+  )
+}
+
+// ── Give special item selector (inventory) ───────────────────────────────────
 function GiveItemBar({ onGive, disabled, owned }) {
   const [key, setKey] = useState('')
-  const weapons = ITEMS.filter((i) => i.kind === 'weapon')
-  const potions = ITEMS.filter((i) => i.kind === 'potion')
   return (
     <div className="flex gap-2">
       <select
@@ -495,20 +590,11 @@ function GiveItemBar({ onGive, disabled, owned }) {
         className="min-w-0 flex-1 rounded-none border-2 border-line bg-surface2 px-2 py-1.5 text-sm text-ink outline-none focus:border-gold"
       >
         <option value="">Выдать предмет…</option>
-        <optgroup label="Оружие">
-          {weapons.map((i) => (
-            <option key={i.key} value={i.key} disabled={owned.has(i.key)}>
-              {i.name} · {rarityOf(i.rarity).label}{owned.has(i.key) ? ' (есть)' : ''}
-            </option>
-          ))}
-        </optgroup>
-        <optgroup label="Зелья">
-          {potions.map((i) => (
-            <option key={i.key} value={i.key} disabled={owned.has(i.key)}>
-              {i.name} · {rarityOf(i.rarity).label}{owned.has(i.key) ? ' (есть)' : ''}
-            </option>
-          ))}
-        </optgroup>
+        {ITEMS.map((i) => (
+          <option key={i.key} value={i.key} disabled={owned.has(i.key)}>
+            {i.name} · {rarityOf(i.rarity).label}{owned.has(i.key) ? ' (есть)' : ''}
+          </option>
+        ))}
       </select>
       <PixelButton variant="crystal" disabled={!key || disabled} onClick={() => { onGive(key); setKey('') }}>
         Выдать

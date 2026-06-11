@@ -1,13 +1,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Зеркало каталога предметов игры Theos (`lib/data/models/weapon.dart`).
+// Статический каталог предметов игры — после гир-апдейта 2026-06 здесь
+// остались только особые расходники из кода игры (`special_items.dart`).
 //
-// ⚠️ ПРАВИЛО: когда в игру добавляется новое оружие/зелье (в `WeaponCatalog`),
-// продублируй его ЗДЕСЬ — тогда оно сразу доступно к выдаче в инвентарь игрока
-// из вкладки «Игроки». Edge Function `panel-admin` принимает любой item_key,
-// поэтому правится только этот файл (без передеплоя функции).
+// Оружие и броня теперь ДИНАМИЧЕСКИЕ (таблицы weapon_items / armor_sets +
+// armor_pieces) — добавляются во вкладке «Броня и оружие», выдаются игрокам
+// из вкладки «Игроки» через panel-admin (give_gear/remove_gear, user_items).
+// Старое правило «добавил предмет в weapon.dart → продублируй здесь» умерло
+// вместе со статическим каталогом.
 //
-// Питомцы / еда / яйца — динамические (живут в БД: pet_species / pet_food /
-// inventory_stacks), их сюда не вносим — панель тянет их из таблиц.
+// Питомцы / еда / яйца — тоже динамика (pet_species / pet_food /
+// inventory_stacks).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const RARITY = {
@@ -20,38 +22,16 @@ export const RARITY = {
 }
 export const rarityOf = (k) => RARITY[k] ?? RARITY.common
 
-// kind: 'weapon' | 'potion'
+// kind: 'potion' (особые расходники в таблице `inventory`)
 export const ITEMS = [
-  // ─── Оружие ───
-  { key: 'sword_short', name: 'Меч странника', kind: 'weapon', rarity: 'common' },
-  { key: 'dagger_iron', name: 'Железный кинжал', kind: 'weapon', rarity: 'common' },
-  { key: 'hammer_field', name: 'Походный молот', kind: 'weapon', rarity: 'common' },
-  { key: 'sword_long', name: 'Длинный клинок', kind: 'weapon', rarity: 'uncommon' },
-  { key: 'axe_woodsman', name: 'Лесорубный топор', kind: 'weapon', rarity: 'uncommon' },
-  { key: 'wand_novice', name: 'Жезл новика', kind: 'weapon', rarity: 'uncommon' },
-  { key: 'sword_two_hand', name: 'Двуручный меч', kind: 'weapon', rarity: 'rare' },
-  { key: 'hammer_heavy', name: 'Тяжёлый молот', kind: 'weapon', rarity: 'rare' },
-  { key: 'wand_arcane', name: 'Жезл магистра', kind: 'weapon', rarity: 'rare' },
-  { key: 'axe_battle', name: 'Боевой топор', kind: 'weapon', rarity: 'epic' },
-  { key: 'mace_breaker', name: 'Сокрушитель', kind: 'weapon', rarity: 'epic' },
-  { key: 'dagger_thief', name: 'Кинжал тени', kind: 'weapon', rarity: 'epic' },
-  { key: 'sword_hero', name: 'Меч героя', kind: 'weapon', rarity: 'legendary' },
-  { key: 'staff_archmage', name: 'Посох Архимага', kind: 'weapon', rarity: 'legendary' },
-  { key: 'sword_dragon', name: 'Клинок Дракона', kind: 'weapon', rarity: 'mythic' },
-  // ─── Зелья ───
-  { key: 'potion_health_minor', name: 'Малое зелье жизни', kind: 'potion', rarity: 'common' },
-  { key: 'potion_mana_minor', name: 'Малое зелье магии', kind: 'potion', rarity: 'common' },
-  { key: 'potion_swift', name: 'Зелье ловкости', kind: 'potion', rarity: 'uncommon' },
-  { key: 'potion_berserker', name: 'Зелье берсерка', kind: 'potion', rarity: 'rare' },
-  { key: 'potion_sage', name: 'Зелье мудреца', kind: 'potion', rarity: 'epic' },
-  { key: 'elixir_immortal', name: 'Эликсир бессмертия', kind: 'potion', rarity: 'legendary' },
-  // Особый расходник: дроп золотого сундука ~0.02% (app_config
-  // gold_chest_class_potion_pct). Выпил → заново выбирает фракцию/класс/пол/
-  // причёску. Не продаётся в магазине; у игрока может быть максимум 1.
+  // Зелье смены класса: продаётся в магазине за кристаллы
+  // (app_config.class_potion_shop_gems), дроп золотого сундука ~0.02% и
+  // изумрудного ~2%. Выпил → заново выбирает фракцию/класс/пол/причёску.
+  // У игрока может быть максимум 1.
   { key: 'potion_class_change', name: 'Зелье смены класса', kind: 'potion', rarity: 'legendary' },
 ]
 
-// Стартовое оружие (выдаётся по умолчанию, не продаётся) — только для подписи.
+// Стартовое «оружие» (голые руки) — только для подписи в инвентаре.
 export const FISTS = { key: 'fists', name: 'Голые кулаки', kind: 'weapon', rarity: 'common' }
 
 const BY_KEY = Object.fromEntries([...ITEMS, FISTS].map((i) => [i.key, i]))

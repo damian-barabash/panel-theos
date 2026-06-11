@@ -71,6 +71,13 @@ export function adminGiveItem(user_id, item_key) {
 export function adminRemoveItem(user_id, item_key) {
   return callFunction('panel-admin', { action: 'remove_item', user_id, item_key })
 }
+// dynamic gear (user_items): kind 'armor' (armor_pieces.id) | 'weapon' (weapon_items.id)
+export function adminGiveGear(user_id, kind, ref_id) {
+  return callFunction('panel-admin', { action: 'give_gear', user_id, kind, ref_id })
+}
+export function adminRemoveGear(user_id, kind, ref_id) {
+  return callFunction('panel-admin', { action: 'remove_gear', user_id, kind, ref_id })
+}
 // item_type: 'egg' | 'food', item_ref: 'egg' or a pet_food.id, quantity: absolute >= 0
 export function adminSetStack(user_id, item_type, item_ref, quantity) {
   return callFunction('panel-admin', { action: 'set_stack', user_id, item_type, item_ref, quantity })
