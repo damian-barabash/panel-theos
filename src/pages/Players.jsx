@@ -185,15 +185,16 @@ function PlayerList({ players, onPick }) {
 }
 
 // ── Player detail (modal) ────────────────────────────────────────────────────
+// С класс-апдейта 2026-06 статы дробные (шкала 0..10, шаг 0.1) — decimal: true.
 const STAT_FIELDS = [
   { key: 'gold', label: 'Золото', accent: 'text-gold' },
   { key: 'gems', label: 'Кристаллы', accent: 'text-crystal' },
   { key: 'level', label: 'Уровень', accent: 'text-ink' },
   { key: 'xp_current', label: 'Опыт (тек.)', accent: 'text-ink' },
-  { key: 'strength', label: 'Сила', accent: 'text-danger' },
-  { key: 'intellect', label: 'Интеллект', accent: 'text-crystalDeep' },
-  { key: 'agility', label: 'Ловкость', accent: 'text-ok' },
-  { key: 'stamina', label: 'Выносливость', accent: 'text-warn' },
+  { key: 'strength', label: 'Сила', accent: 'text-danger', decimal: true },
+  { key: 'intellect', label: 'Интеллект', accent: 'text-crystalDeep', decimal: true },
+  { key: 'agility', label: 'Ловкость', accent: 'text-ok', decimal: true },
+  { key: 'stamina', label: 'Выносливость', accent: 'text-warn', decimal: true },
 ]
 
 function PlayerDetail({ userId, petFood, petSpecies, onClose, onMutated, onDeleted }) {
@@ -318,6 +319,7 @@ function PlayerDetail({ userId, petFood, petSpecies, onClose, onMutated, onDelet
                       <span className={`label ${s.accent}`}>{s.label}</span>
                       <input
                         type="number"
+                        step={s.decimal ? '0.1' : '1'}
                         value={form[s.key] ?? 0}
                         onChange={(e) => setForm((f) => ({ ...f, [s.key]: e.target.value }))}
                         className="w-full rounded-none border-2 border-line bg-surface2 px-2 py-1.5 text-sm text-ink outline-none focus:border-gold"

@@ -54,8 +54,32 @@ const BY_KEY = Object.fromEntries([...ITEMS, FISTS].map((i) => [i.key, i]))
 export const itemByKey = (key) => BY_KEY[key] ?? { key, name: key, kind: 'weapon', rarity: 'common' }
 
 export const CLASS_LABEL = {
-  warrior: 'Воин',
-  mage: 'Маг',
-  archer: 'Лучник',
-  lancer: 'Копейщик',
+  // Legacy (до класс-апдейта 2026-06) — видны, пока игрок не перевыбрал класс.
+  warrior: 'Воин (стар.)',
+  mage: 'Маг (стар.)',
+  archer: 'Лучник (стар.)',
+  lancer: 'Копейщик (стар.)',
+  // Сила
+  knight: 'Рыцарь',
+  barbarian: 'Варвар',
+  berserk: 'Берсерк',
+  paladin: 'Паладин',
+  // Ловкость
+  werewolf: 'Оборотень',
+  assassin: 'Ассасин',
+  bandit: 'Разбойник',
+  scoundrel: 'Плут',
+  shadow_blade: 'Клинок тени',
+  raider: 'Рейдер',
+  // Выносливость
+  crusader: 'Крестоносец',
+  war_priest: 'Боевой жрец',
+  dark_knight: 'Тёмный рыцарь',
+  monk: 'Монах',
+  // Интеллект
+  elementalist: 'Элементалист',
+  necromancer: 'Некромант',
+  shaman: 'Шаман',
+  druid: 'Друид',
+  healer: 'Целитель',
 }

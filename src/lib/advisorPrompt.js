@@ -14,17 +14,53 @@
 //   APP_NO_NAME/lib/services/level_service.dart       (statSoftMax)
 //   APP_NO_NAME/lib/services/template.dart            (renderTemplate)
 
-// ── character_class.dart ─────────────────────────────────────────────────────
-const CLASS_TITLE = { warrior: 'Воин', mage: 'Маг', archer: 'Лучник', lancer: 'Копейщик' }
-const CLASS_MAIN_STAT = { warrior: 'strength', mage: 'intellect', archer: 'agility', lancer: 'stamina' }
+// ── character_class.dart (2026-06 class update: 19 classes / 4 fractions) ────
+export const CLASS_META = {
+  knight: { title: 'Рыцарь', fraction: 'strength' },
+  barbarian: { title: 'Варвар', fraction: 'strength' },
+  berserk: { title: 'Берсерк', fraction: 'strength' },
+  paladin: { title: 'Паладин', fraction: 'strength' },
+  werewolf: { title: 'Оборотень', fraction: 'agility' },
+  assassin: { title: 'Ассасин', fraction: 'agility' },
+  bandit: { title: 'Разбойник', fraction: 'agility' },
+  scoundrel: { title: 'Плут', fraction: 'agility' },
+  shadow_blade: { title: 'Клинок тени', fraction: 'agility' },
+  raider: { title: 'Рейдер', fraction: 'agility' },
+  crusader: { title: 'Крестоносец', fraction: 'endurance' },
+  war_priest: { title: 'Боевой жрец', fraction: 'endurance' },
+  dark_knight: { title: 'Тёмный рыцарь', fraction: 'endurance' },
+  monk: { title: 'Монах', fraction: 'endurance' },
+  elementalist: { title: 'Элементалист', fraction: 'intellect' },
+  necromancer: { title: 'Некромант', fraction: 'intellect' },
+  shaman: { title: 'Шаман', fraction: 'intellect' },
+  druid: { title: 'Друид', fraction: 'intellect' },
+  healer: { title: 'Целитель', fraction: 'intellect' },
+}
+
+// Fraction → its stat key + Russian title (Fraction enum in Dart).
+const FRACTION_STAT = { strength: 'strength', agility: 'agility', endurance: 'stamina', intellect: 'intellect' }
+const FRACTION_RU = { strength: 'Сила', agility: 'Ловкость', endurance: 'Выносливость', intellect: 'Интеллект' }
 const STAT_RU = { strength: 'Сила', intellect: 'Интеллект', agility: 'Ловкость', stamina: 'Выносливость' }
 
-// CharacterClass.fromDb falls back to warrior on unknown values.
-export function classTitle(dbValue) { return CLASS_TITLE[dbValue] ?? CLASS_TITLE.warrior }
-export function classMainStat(dbValue) { return CLASS_MAIN_STAT[dbValue] ?? CLASS_MAIN_STAT.warrior }
+// CharacterClass.fromDb: legacy values map onto stand-ins; fallback = knight.
+const LEGACY_MAP = { warrior: 'knight', mage: 'elementalist', archer: 'assassin', lancer: 'crusader' }
+export function resolveClass(dbValue) {
+  const key = LEGACY_MAP[dbValue] ?? dbValue
+  return CLASS_META[key] ? key : 'knight'
+}
+export function classTitle(dbValue) { return CLASS_META[resolveClass(dbValue)].title }
+export function classFraction(dbValue) { return CLASS_META[resolveClass(dbValue)].fraction }
+export function classMainStat(dbValue) { return FRACTION_STAT[classFraction(dbValue)] }
+export function fractionTitle(dbValue) { return FRACTION_RU[classFraction(dbValue)] }
 
-// ── level_service.dart: statSoftMax(level) = 30 + level*8 ────────────────────
-export function statSoftMax(level) { return 30 + level * 8 }
+// ── level_service.dart: statSoftMax(level) = 10 + level*0.8 (decimal scale) ──
+export function statSoftMax(level) { return 10 + level * 0.8 }
+
+// level_service.dart: fmtStat — one decimal, trailing '.0' trimmed.
+export function fmtStat(v) {
+  const s = Number(v).toFixed(1)
+  return s.endsWith('.0') ? s.slice(0, -2) : s
+}
 
 // ── template.dart: replace every {{name}} for which a value is provided ──────
 export function renderTemplate(template, vars) {
@@ -74,11 +110,16 @@ export function buildContext(profile, tasks) {
 
   const maxStat = statSoftMax(profile.level)
   const cls = profile.character_class
+  // Gender.fromDb: только 'w' даёт женский, всё прочее (null) — мужской.
+  const genderLine = profile.gender === 'w'
+    ? 'женский (обращайся к носителю как к женщине)'
+    : 'мужской'
   const lines = [
     `Имя: ${profile.name}`,
-    `Класс: ${classTitle(cls)} (главная стата — ${STAT_RU[classMainStat(cls)] ?? classMainStat(cls)})`,
-    `Уровень: ${profile.level} (макс. стата сейчас ~${maxStat})`,
-    `Статы: Сила ${profile.strength}, Интеллект ${profile.intellect}, Ловкость ${profile.agility}, Выносливость ${profile.stamina}`,
+    `Пол: ${genderLine}`,
+    `Класс: ${classTitle(cls)}, фракция ${fractionTitle(cls)} (главная стата — ${STAT_RU[classMainStat(cls)] ?? classMainStat(cls)})`,
+    `Уровень: ${profile.level} (макс. стата сейчас ~${fmtStat(maxStat)})`,
+    `Статы: Сила ${fmtStat(profile.strength)}, Интеллект ${fmtStat(profile.intellect)}, Ловкость ${fmtStat(profile.agility)}, Выносливость ${fmtStat(profile.stamina)}`,
     `Сегодня: выполнено ${doneToday}, осталось на сегодня ${pendingToday} задач`,
     `Невыполненных/пропущенных за всё время: ${missedRecent}`,
   ]
