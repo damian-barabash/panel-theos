@@ -2,12 +2,11 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import {
   adminDashboard, adminListPlayers, adminPlayerDetail,
-  adminUpdateProfile, adminGiveItem, adminRemoveItem,
-  adminGiveGear, adminRemoveGear, adminSetStack,
+  adminUpdateProfile, adminGiveGear, adminRemoveGear, adminSetStack,
   adminSetPassword, adminDeletePlayer,
 } from '../lib/api'
 import { PixelFrame, PixelButton, Spinner, useToast } from '../components/ui'
-import { ITEMS, itemByKey, rarityOf, CLASS_LABEL } from '../lib/itemCatalog'
+import { rarityOf, CLASS_LABEL } from '../lib/itemCatalog'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function relTime(iso) {
@@ -253,17 +252,6 @@ function PlayerDetail({ userId, petFood, petSpecies, gearCatalog, onClose, onMut
     } catch (e) { toast.error(e.message) } finally { setBusy(false) }
   }
 
-  async function giveItem(key) {
-    if (!key) return
-    setBusy(true)
-    try { const r = await adminGiveItem(userId, key); toast[r.already ? 'info' : 'ok'](r.already ? 'Уже есть' : 'Выдано'); await load(); onMutated?.() }
-    catch (e) { toast.error(e.message) } finally { setBusy(false) }
-  }
-  async function removeItem(key) {
-    setBusy(true)
-    try { await adminRemoveItem(userId, key); toast.ok('Забрано'); await load(); onMutated?.() }
-    catch (e) { toast.error(e.message) } finally { setBusy(false) }
-  }
   async function giveGear(kind, refId) {
     if (!refId) return
     setBusy(true)
@@ -390,33 +378,9 @@ function PlayerDetail({ userId, petFood, petSpecies, gearCatalog, onClose, onMut
                 )}
               </section>
 
-              {/* special consumables (inventory: class potion etc.) */}
+              {/* stacks: eggs + food + potions */}
               <section>
-                <div className="label mb-2 text-faint">Особые предметы</div>
-                <GiveItemBar onGive={giveItem} disabled={busy} owned={new Set(data.inventory.map((i) => i.item_key))} />
-                {data.inventory.length === 0 ? (
-                  <p className="mt-2 text-xs text-faint">Пусто.</p>
-                ) : (
-                  <div className="mt-2 flex flex-col gap-1.5">
-                    {data.inventory.map((row) => {
-                      const it = itemByKey(row.item_key)
-                      const r = rarityOf(it.rarity)
-                      return (
-                        <div key={row.id} className="flex items-center gap-2 border-2 border-line bg-surface px-2.5 py-1.5">
-                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: r.color }} />
-                          <span className="min-w-0 flex-1 truncate text-sm text-ink">{it.name}</span>
-                          <button onClick={() => removeItem(row.item_key)} disabled={busy}
-                            className="text-xs text-danger hover:underline">Забрать</button>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </section>
-
-              {/* stacks: eggs + food */}
-              <section>
-                <div className="label mb-2 text-faint">Расходники · яйца и еда</div>
+                <div className="label mb-2 text-faint">Расходники · яйца, еда и зелья</div>
                 <StacksEditor
                   stacks={data.stacks} petFood={petFood} foodById={foodById}
                   onSet={setStack} disabled={busy}
@@ -579,34 +543,13 @@ function GiveGearBar({ gearCatalog, onGive, disabled, owned }) {
   )
 }
 
-// ── Give special item selector (inventory) ───────────────────────────────────
-function GiveItemBar({ onGive, disabled, owned }) {
-  const [key, setKey] = useState('')
-  return (
-    <div className="flex gap-2">
-      <select
-        value={key}
-        onChange={(e) => setKey(e.target.value)}
-        className="min-w-0 flex-1 rounded-none border-2 border-line bg-surface2 px-2 py-1.5 text-sm text-ink outline-none focus:border-gold"
-      >
-        <option value="">Выдать предмет…</option>
-        {ITEMS.map((i) => (
-          <option key={i.key} value={i.key} disabled={owned.has(i.key)}>
-            {i.name} · {rarityOf(i.rarity).label}{owned.has(i.key) ? ' (есть)' : ''}
-          </option>
-        ))}
-      </select>
-      <PixelButton variant="crystal" disabled={!key || disabled} onClick={() => { onGive(key); setKey('') }}>
-        Выдать
-      </PixelButton>
-    </div>
-  )
-}
+// ── Stacks editor (eggs + food + potions) ────────────────────────────────────
+const CLASS_POTION_REF = 'potion_class_change'
 
-// ── Stacks editor (eggs + food) ──────────────────────────────────────────────
 function StacksEditor({ stacks, petFood, foodById, onSet, disabled }) {
   const eggStack = stacks.find((s) => s.item_type === 'egg' && s.item_ref === 'egg')
   const eggQty = eggStack?.quantity ?? 0
+  const potionQty = stacks.find((s) => s.item_type === 'potion' && s.item_ref === CLASS_POTION_REF)?.quantity ?? 0
   const foodStacks = stacks.filter((s) => s.item_type === 'food')
   const [addFood, setAddFood] = useState('')
 
@@ -627,6 +570,8 @@ function StacksEditor({ stacks, petFood, foodById, onSet, disabled }) {
   return (
     <div className="flex flex-col gap-1.5">
       <StackRow label="Яйцо" color="#9B6BFF" qty={eggQty} onChange={(q) => onSet('egg', 'egg', q)} />
+      <StackRow label="Зелье смены класса" color="#E8B547" qty={potionQty}
+        onChange={(q) => onSet('potion', CLASS_POTION_REF, q)} />
       {foodStacks.map((s) => {
         const f = foodById[s.item_ref]
         return (

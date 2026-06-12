@@ -130,6 +130,52 @@ const intOrNull = (v) => {
   return Number.isNaN(n) ? null : n
 }
 
+/// Пикселизация иконки оружия: исходники часто сглаженные (мыло в игре).
+/// Обрезаем по альфе, ужимаем длинную сторону до 13 px и режем полупрозрачные
+/// пиксели — игра растягивает nearest'ом и получает чёткий пиксель-арт.
+async function pixelateWeapon(file, target = 13, alphaCut = 110) {
+  const bmp = await createImageBitmap(file)
+  try {
+    const c = document.createElement('canvas')
+    c.width = bmp.width
+    c.height = bmp.height
+    const ctx = c.getContext('2d')
+    ctx.drawImage(bmp, 0, 0)
+    const data = ctx.getImageData(0, 0, c.width, c.height).data
+    let l = c.width, t = c.height, r = -1, b = -1
+    for (let y = 0; y < c.height; y++) {
+      for (let x = 0; x < c.width; x++) {
+        if (data[(y * c.width + x) * 4 + 3] > 8) {
+          if (x < l) l = x
+          if (x > r) r = x
+          if (y < t) t = y
+          if (y > b) b = y
+        }
+      }
+    }
+    if (r < 0) throw new Error('Картинка пустая')
+    const w = r - l + 1, h = b - t + 1
+    const s = target / Math.max(w, h)
+    const ow = Math.max(1, Math.round(w * s))
+    const oh = Math.max(1, Math.round(h * s))
+    const out = document.createElement('canvas')
+    out.width = ow
+    out.height = oh
+    const octx = out.getContext('2d')
+    octx.imageSmoothingEnabled = true
+    octx.imageSmoothingQuality = 'high'
+    octx.drawImage(bmp, l, t, w, h, 0, 0, ow, oh)
+    const od = octx.getImageData(0, 0, ow, oh)
+    for (let i = 3; i < od.data.length; i += 4) {
+      od.data[i] = od.data[i] > alphaCut ? 255 : 0
+    }
+    octx.putImageData(od, 0, 0)
+    return await new Promise((res) => out.toBlob(res, 'image/png'))
+  } finally {
+    bmp.close()
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ARMOR
 // ─────────────────────────────────────────────────────────────────────────────
@@ -495,14 +541,14 @@ function WeaponSection() {
     if (!file) return
     setUploading(true)
     try {
-      const ext = (file.name.split('.').pop() || 'png').toLowerCase()
-      const path = `weapon-${Date.now()}.${ext}`
+      const crisp = await pixelateWeapon(file)
+      const path = `weapon-${Date.now()}.png`
       const { error } = await supabase.storage.from('weapons')
-        .upload(path, file, { upsert: true, contentType: file.type })
+        .upload(path, crisp, { upsert: true, contentType: 'image/png' })
       if (error) throw error
       const { data } = supabase.storage.from('weapons').getPublicUrl(path)
       setForm((f) => ({ ...f, image_url: data.publicUrl }))
-      toast.ok('Картинка загружена')
+      toast.ok('Картинка загружена (пикселизирована)')
     } catch (e) {
       toast.error(e.message || 'Не удалось загрузить')
     } finally {
